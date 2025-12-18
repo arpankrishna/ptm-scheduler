@@ -262,8 +262,14 @@ const PTMScheduler = () => {
   };
 
   const updateBooking = (id, field, value) => {
-    setParentBookings(parentBookings.map(b => 
+    setParentBookings(prevBookings => prevBookings.map(b => 
       b.id === id ? { ...b, [field]: value } : b
+    ));
+  };
+
+  const updateMultipleFields = (id, updates) => {
+    setParentBookings(prevBookings => prevBookings.map(b => 
+      b.id === id ? { ...b, ...updates } : b
     ));
   };
 
@@ -607,9 +613,11 @@ const PTMScheduler = () => {
                       <select
                         value={booking.grade}
                         onChange={(e) => {
-                          updateBooking(booking.id, 'grade', e.target.value);
-                          updateBooking(booking.id, 'teacher', '');
-                          updateBooking(booking.id, 'time', '');
+                          updateMultipleFields(booking.id, {
+                            grade: e.target.value,
+                            teacher: '',
+                            time: ''
+                          });
                         }}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                       >
@@ -625,8 +633,10 @@ const PTMScheduler = () => {
                       <select
                         value={booking.teacher}
                         onChange={(e) => {
-                          updateBooking(booking.id, 'teacher', e.target.value);
-                          updateBooking(booking.id, 'time', '');
+                          updateMultipleFields(booking.id, {
+                            teacher: e.target.value,
+                            time: ''
+                          });
                         }}
                         disabled={!booking.grade}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"

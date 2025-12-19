@@ -96,29 +96,23 @@ const PTMScheduler = () => {
   useEffect(() => {
     if (slideshowMode && userRole === 'admin') {
       const interval = setInterval(() => {
-        setCurrentSlideGrade(prev => {
-          const nextGrade = (prev + 1) % sheets.length;
-          
-          // If we're cycling to the next grade, reset page to 0
-          if (nextGrade !== prev) {
-            setCurrentSlidePage(0);
-          }
-          
-          return nextGrade;
-        });
-        
-        // Also rotate through pages for the current grade
         const currentGradeTeachers = teacherData[sheets[currentSlideGrade]] || [];
         const totalPages = Math.ceil(currentGradeTeachers.length / TEACHERS_PER_PAGE);
         
-        if (totalPages > 1) {
-          setCurrentSlidePage(prev => (prev + 1) % totalPages);
+        // If there are multiple pages, rotate through them first
+        if (totalPages > 1 && currentSlidePage < totalPages - 1) {
+          // Move to next page of same grade
+          setCurrentSlidePage(prev => prev + 1);
+        } else {
+          // All pages shown, move to next grade and reset page
+          setCurrentSlidePage(0);
+          setCurrentSlideGrade(prev => (prev + 1) % sheets.length);
         }
       }, 6000); // 6 seconds per page
       
       return () => clearInterval(interval);
     }
-  }, [slideshowMode, userRole, currentSlideGrade]);
+  }, [slideshowMode, userRole, currentSlideGrade, currentSlidePage]);
 
   useEffect(() => {
     if (slideshowMode) {

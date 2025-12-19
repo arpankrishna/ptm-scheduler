@@ -51,6 +51,9 @@ const PTMScheduler = () => {
   const [activePhase, setActivePhase] = useState('phase1');
   const [slideshowMode, setSlideshowMode] = useState(false);
   const [currentSlideGrade, setCurrentSlideGrade] = useState(0);
+  const [currentSlidePage, setCurrentSlidePage] = useState(0); // For teacher pagination
+  
+  const TEACHERS_PER_PAGE = 10; // Show 10 teachers per screen
   
   // Parent booking form state
   const [studentName, setStudentName] = useState('');
@@ -89,15 +92,33 @@ const PTMScheduler = () => {
     };
   }, []);
 
-  // Slideshow auto-advance
+  // Slideshow auto-advance with pagination
   useEffect(() => {
     if (slideshowMode && userRole === 'admin') {
       const interval = setInterval(() => {
-        setCurrentSlideGrade(prev => (prev + 1) % sheets.length);
-      }, 8000); // 8 seconds per grade
+        setCurrentSlideGrade(prev => {
+          const nextGrade = (prev + 1) % sheets.length;
+          
+          // If we're cycling to the next grade, reset page to 0
+          if (nextGrade !== prev) {
+            setCurrentSlidePage(0);
+          }
+          
+          return nextGrade;
+        });
+        
+        // Also rotate through pages for the current grade
+        const currentGradeTeachers = teacherData[sheets[currentSlideGrade]] || [];
+        const totalPages = Math.ceil(currentGradeTeachers.length / TEACHERS_PER_PAGE);
+        
+        if (totalPages > 1) {
+          setCurrentSlidePage(prev => (prev + 1) % totalPages);
+        }
+      }, 6000); // 6 seconds per page
+      
       return () => clearInterval(interval);
     }
-  }, [slideshowMode, userRole]);
+  }, [slideshowMode, userRole, currentSlideGrade]);
 
   useEffect(() => {
     if (slideshowMode) {
@@ -195,8 +216,13 @@ const PTMScheduler = () => {
     const totalSlots = phases[phase].slots;
     
     for (let slot = 1; slot <= totalSlots; slot++) {
-      const key = getBookingKey(grade, teacher, phase, slot);
-      if (!bookings[key]) {
+      // Check if teacher is busy in ANY grade at this phase/slot
+      const isBusy = sheets.some(g => {
+        const key = getBookingKey(g, teacher, phase, slot);
+        return bookings[key]; // If booking exists in any grade, teacher is busy
+      });
+      
+      if (!isBusy) {
         availableSlots.push(slot);
       }
     }
@@ -824,6 +850,19 @@ const PTMScheduler = () => {
 
           {/* Admin Grid */}
           <div className="p-4 overflow-x-auto">
+            {/* Pagination indicator for slideshow mode */}
+            {slideshowMode && (() => {
+              const teachers = teacherData[activeSheet] || [];
+              const totalPages = Math.ceil(teachers.length / TEACHERS_PER_PAGE);
+              return totalPages > 1 ? (
+                <div className="mb-3 text-center bg-indigo-100 py-2 rounded-lg">
+                  <span className="text-indigo-800 font-semibold text-lg">
+                    Page {currentSlidePage + 1} of {totalPages}
+                  </span>
+                </div>
+              ) : null;
+            })()}
+            
             <table className="w-full border-collapse">
               <thead>
                 <tr>
@@ -836,49 +875,61 @@ const PTMScheduler = () => {
                 </tr>
               </thead>
               <tbody>
-                {teacherData[activeSheet]?.map(teacher => {
-                  const isOnBreak = teacherStatus[teacher]?.isOnBreak || false;
+                {(() => {
+                  const teachers = teacherData[activeSheet] || [];
                   
-                  return (
-                    <tr key={teacher} className={isOnBreak ? 'bg-yellow-100' : ''}>
-                      <td className="border p-2 font-medium sticky left-0 bg-white z-10">
-                        {teacher}
-                        {isOnBreak && <span className="ml-2 text-yellow-600 text-xs">☕ Break</span>}
-                      </td>
-                      {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => {
-                        const key = getBookingKey(activeSheet, teacher, activePhase, slot);
-                        const booking = bookings[key];
-                        
-                        return (
-                          <td
-                            key={slot}
-                            className={`border p-1 text-xs text-center ${
-                              booking
-                                ? booking.status === 'done'
-                                  ? 'bg-green-200 font-semibold'
-                                  : booking.status === 'not_met'
-                                  ? 'bg-orange-200 font-semibold'
-                                  : 'bg-blue-100'
-                                : 'bg-gray-50'
-                            }`}
-                          >
-                            {booking ? (
-                              <div className="text-xs">
-                                {booking.studentName}
-                                <br />
-                                <span className="text-gray-600">
-                                  {booking.studentClass}-{booking.studentSection}
-                                </span>
-                              </div>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
+                  // In slideshow mode, paginate teachers
+                  const displayTeachers = slideshowMode
+                    ? teachers.slice(
+                        currentSlidePage * TEACHERS_PER_PAGE,
+                        (currentSlidePage + 1) * TEACHERS_PER_PAGE
+                      )
+                    : teachers;
+                  
+                  return displayTeachers.map(teacher => {
+                    const isOnBreak = teacherStatus[teacher]?.isOnBreak || false;
+                    
+                    return (
+                      <tr key={teacher} className={isOnBreak ? 'bg-yellow-100' : ''}>
+                        <td className="border p-2 font-medium sticky left-0 bg-white z-10">
+                          {teacher}
+                          {isOnBreak && <span className="ml-2 text-yellow-600 text-xs">☕ Break</span>}
+                        </td>
+                        {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => {
+                          const key = getBookingKey(activeSheet, teacher, activePhase, slot);
+                          const booking = bookings[key];
+                          
+                          return (
+                            <td
+                              key={slot}
+                              className={`border p-1 text-xs text-center ${
+                                booking
+                                  ? booking.status === 'done'
+                                    ? 'bg-green-200 font-semibold'
+                                    : booking.status === 'not_met'
+                                    ? 'bg-orange-200 font-semibold'
+                                    : 'bg-blue-100'
+                                  : 'bg-gray-50'
+                              }`}
+                            >
+                              {booking ? (
+                                <div className="text-xs">
+                                  {booking.studentName}
+                                  <br />
+                                  <span className="text-gray-600">
+                                    {booking.studentClass}-{booking.studentSection}
+                                  </span>
+                                </div>
+                              ) : (
+                                '-'
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  });
+                })()}
               </tbody>
             </table>
           </div>

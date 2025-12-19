@@ -25,7 +25,7 @@ const PTMScheduler = () => {
 
   const sheets = ['IX', 'X', 'XI', 'XII'];
   const sections = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const adminPassword = 'admin123'; // Change this!
+  const adminPassword = 'SBS-admin_2025';
 
   // All unique teachers
   const allTeachers = useMemo(() => {
@@ -54,7 +54,6 @@ const PTMScheduler = () => {
   
   // Parent booking form state
   const [studentName, setStudentName] = useState('');
-  const [studentClass, setStudentClass] = useState('');
   const [studentSection, setStudentSection] = useState('');
   const [selectedTeachers, setSelectedTeachers] = useState([]); // Array of { teacher, grade, phase, slot }
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -215,8 +214,8 @@ const PTMScheduler = () => {
   };
 
   const validateAndSubmit = async () => {
-    if (!studentName || !studentClass || !studentSection) {
-      alert('Please enter student name, class, and section');
+    if (!studentName || !studentSection) {
+      alert('Please enter student name and section');
       return;
     }
 
@@ -235,7 +234,7 @@ const PTMScheduler = () => {
         .insert({
           booking_key: bookingKey,
           student_name: studentName,
-          student_class: studentClass,
+          student_class: selection.grade, // Use grade as class
           student_section: studentSection,
           grade: selection.grade,
           teacher: selection.teacher,
@@ -248,6 +247,7 @@ const PTMScheduler = () => {
       if (!error) {
         results.push({
           teacher: selection.teacher,
+          grade: selection.grade,
           phase: phases[selection.phase].name,
           slot: selection.slot
         });
@@ -257,11 +257,7 @@ const PTMScheduler = () => {
     setConfirmations(results);
     setShowConfirmation(true);
     
-    // Reset form
-    setStudentName('');
-    setStudentClass('');
-    setStudentSection('');
-    setSelectedTeachers([]);
+    // Don't reset form - let parent see and screenshot
   };
 
   // Teacher functions
@@ -433,26 +429,50 @@ const PTMScheduler = () => {
             {/* Confirmation Modal */}
             {showConfirmation && (
               <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                <div className="bg-white rounded-lg p-8 max-w-md w-full">
+                <div className="bg-white rounded-lg p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
                   <div className="text-center mb-6">
                     <CheckCircle size={64} className="text-green-500 mx-auto mb-4" />
-                    <h3 className="text-2xl font-bold text-green-700">Bookings Confirmed!</h3>
+                    <h3 className="text-2xl font-bold text-green-700 mb-2">Bookings Confirmed!</h3>
+                    <p className="text-gray-600">📸 Take a screenshot of this confirmation</p>
                   </div>
                   
-                  <div className="bg-green-50 rounded-lg p-4 mb-6">
+                  {/* Student Details */}
+                  <div className="bg-indigo-50 rounded-lg p-4 mb-6 border-2 border-indigo-200">
+                    <h4 className="font-bold text-indigo-900 mb-2">Student Details:</h4>
+                    <p className="text-indigo-800"><strong>Name:</strong> {studentName}</p>
+                    <p className="text-indigo-800"><strong>Section:</strong> {studentSection}</p>
+                  </div>
+
+                  {/* Booking List */}
+                  <div className="bg-green-50 rounded-lg p-4 mb-6 border-2 border-green-200">
+                    <h4 className="font-bold text-green-900 mb-3">Your PTM Appointments:</h4>
                     {confirmations.map((conf, idx) => (
-                      <div key={idx} className="mb-2">
-                        <p className="font-semibold">✓ {conf.teacher}</p>
-                        <p className="text-sm text-gray-600">{conf.phase} - Slot {conf.slot}</p>
+                      <div key={idx} className="bg-white rounded p-3 mb-2 border border-green-300">
+                        <p className="font-bold text-lg text-green-800">✓ {conf.teacher}</p>
+                        <p className="text-gray-700">Grade: {conf.grade}</p>
+                        <p className="text-gray-700">{conf.phase} - Slot {conf.slot}</p>
                       </div>
                     ))}
                   </div>
 
+                  <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
+                    <p className="text-sm text-yellow-800">
+                      <strong>📌 Important:</strong> Please arrive 5 minutes before your slot time. 
+                      Watch the display board for teacher status (Green = Ready, Yellow = On break).
+                    </p>
+                  </div>
+
                   <button
-                    onClick={() => setShowConfirmation(false)}
+                    onClick={() => {
+                      setShowConfirmation(false);
+                      // Reset form after closing
+                      setStudentName('');
+                      setStudentSection('');
+                      setSelectedTeachers([]);
+                    }}
                     className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700"
                   >
-                    Close
+                    Done - Book for Another Student
                   </button>
                 </div>
               </div>
@@ -462,16 +482,17 @@ const PTMScheduler = () => {
             <div className="p-6 bg-blue-50 border-b">
               <h2 className="font-bold text-blue-800 mb-2">📋 How to Book:</h2>
               <ol className="text-sm text-blue-700 space-y-1">
-                <li>1. Enter your child's details below (once)</li>
-                <li>2. Select teachers and their available slots</li>
+                <li>1. Enter your child's name and section below</li>
+                <li>2. Select teachers (with grade, phase, and slot)</li>
                 <li>3. Click "Submit All Bookings"</li>
+                <li>4. Take a screenshot of your confirmation</li>
               </ol>
             </div>
 
             {/* Student Details Form */}
             <div className="p-6 border-b bg-gray-50">
               <h3 className="text-lg font-bold mb-4">Student Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
                   <input
@@ -479,17 +500,6 @@ const PTMScheduler = () => {
                     value={studentName}
                     onChange={(e) => setStudentName(e.target.value)}
                     placeholder="Full Name"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Class *</label>
-                  <input
-                    type="text"
-                    value={studentClass}
-                    onChange={(e) => setStudentClass(e.target.value)}
-                    placeholder="e.g., 9"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>

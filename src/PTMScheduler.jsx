@@ -226,10 +226,19 @@ const PTMScheduler = () => {
 
     // Submit all bookings
     const results = [];
+    const errors = [];
+    
     for (const selection of selectedTeachers) {
       const bookingKey = getBookingKey(selection.grade, selection.teacher, selection.phase, selection.slot);
       
-      const { error } = await supabase
+      console.log('Submitting booking:', {
+        bookingKey,
+        studentName,
+        studentSection,
+        selection
+      });
+      
+      const { data, error } = await supabase
         .from('bookings')
         .insert({
           booking_key: bookingKey,
@@ -242,9 +251,14 @@ const PTMScheduler = () => {
           slot_number: selection.slot,
           time_slot: `${phases[selection.phase].name} - Slot ${selection.slot}`,
           status: 'pending'
-        });
+        })
+        .select();
 
-      if (!error) {
+      if (error) {
+        console.error('Booking error:', error);
+        errors.push({ teacher: selection.teacher, error: error.message });
+      } else {
+        console.log('Booking success:', data);
         results.push({
           teacher: selection.teacher,
           grade: selection.grade,
@@ -254,8 +268,16 @@ const PTMScheduler = () => {
       }
     }
 
-    setConfirmations(results);
-    setShowConfirmation(true);
+    if (errors.length > 0) {
+      alert('Some bookings failed:\n' + errors.map(e => `${e.teacher}: ${e.error}`).join('\n'));
+    }
+
+    if (results.length > 0) {
+      setConfirmations(results);
+      setShowConfirmation(true);
+    } else {
+      alert('No bookings were successful. Please check the console for errors.');
+    }
     
     // Don't reset form - let parent see and screenshot
   };

@@ -614,6 +614,7 @@ const PTMScheduler = () => {
                 getBookingKey={getBookingKey}
                 getAvailableSlotsForTeacher={getAvailableSlotsForTeacher}
                 onAddTeacher={handleAddTeacher}
+                studentClass={studentClass}
               />
 
               {/* Submit Button */}
@@ -971,23 +972,27 @@ const PTMScheduler = () => {
 };
 
 // Parent Teacher Selector Component
-const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher }) => {
-  const [selectedGrade, setSelectedGrade] = useState('');
+const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentClass }) => {
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [selectedPhase, setSelectedPhase] = useState('');
   const [selectedSlot, setSelectedSlot] = useState('');
 
-  const availableSlots = selectedGrade && selectedTeacher && selectedPhase
-    ? getAvailableSlotsForTeacher(selectedTeacher, selectedGrade, selectedPhase)
+  const availableSlots = studentClass && selectedTeacher && selectedPhase
+    ? getAvailableSlotsForTeacher(selectedTeacher, studentClass, selectedPhase)
     : [];
 
   const handleAdd = () => {
-    if (!selectedGrade || !selectedTeacher || !selectedPhase || !selectedSlot) {
-      alert('Please select grade, teacher, phase, and slot');
+    if (!studentClass) {
+      alert('Please select grade in Student Details section first');
+      return;
+    }
+    
+    if (!selectedTeacher || !selectedPhase || !selectedSlot) {
+      alert('Please select teacher, phase, and slot');
       return;
     }
 
-    onAddTeacher(selectedTeacher, selectedGrade, selectedPhase, parseInt(selectedSlot));
+    onAddTeacher(selectedTeacher, studentClass, selectedPhase, parseInt(selectedSlot));
 
     // Reset selections
     setSelectedTeacher('');
@@ -997,26 +1002,7 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
 
   return (
     <div className="border-2 border-gray-300 rounded-lg p-4">
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
-          <select
-            value={selectedGrade}
-            onChange={(e) => {
-              setSelectedGrade(e.target.value);
-              setSelectedTeacher('');
-              setSelectedPhase('');
-              setSelectedSlot('');
-            }}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-          >
-            <option value="">Select Grade</option>
-            {Object.keys(teacherData).map(grade => (
-              <option key={grade} value={grade}>{grade}</option>
-            ))}
-          </select>
-        </div>
-
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Teacher *</label>
           <select
@@ -1026,14 +1012,17 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
               setSelectedPhase('');
               setSelectedSlot('');
             }}
-            disabled={!selectedGrade}
+            disabled={!studentClass}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
           >
             <option value="">Select Teacher</option>
-            {selectedGrade && teacherData[selectedGrade].map(teacher => (
+            {studentClass && teacherData[studentClass].map(teacher => (
               <option key={teacher} value={teacher}>{teacher}</option>
             ))}
           </select>
+          {!studentClass && (
+            <p className="text-xs text-red-600 mt-1">Select grade above first</p>
+          )}
         </div>
 
         <div>

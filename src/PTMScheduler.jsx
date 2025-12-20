@@ -57,6 +57,7 @@ const PTMScheduler = () => {
   
   // Parent booking form state
   const [studentName, setStudentName] = useState('');
+  const [studentClass, setStudentClass] = useState('');
   const [studentSection, setStudentSection] = useState('');
   const [selectedTeachers, setSelectedTeachers] = useState([]); // Array of { teacher, grade, phase, slot }
   const [showConfirmation, setShowConfirmation] = useState(false);
@@ -234,8 +235,8 @@ const PTMScheduler = () => {
   };
 
   const validateAndSubmit = async () => {
-    if (!studentName || !studentSection) {
-      alert('Please enter student name and section');
+    if (!studentName || !studentClass || !studentSection) {
+      alert('Please enter student name, grade, and section');
       return;
     }
 
@@ -254,6 +255,7 @@ const PTMScheduler = () => {
       console.log('Submitting booking:', {
         bookingKey,
         studentName,
+        studentClass,
         studentSection,
         selection
       });
@@ -263,7 +265,7 @@ const PTMScheduler = () => {
         .insert({
           booking_key: bookingKey,
           student_name: studentName,
-          student_class: selection.grade, // Use grade as class
+          student_class: studentClass, // Use parent-entered grade
           student_section: studentSection,
           grade: selection.grade,
           teacher: selection.teacher,
@@ -455,8 +457,8 @@ const PTMScheduler = () => {
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <h1 className="text-3xl font-bold">PTM Booking System</h1>
-                  <p className="text-sm opacity-90 mt-1">Step By Step School - Parent Portal</p>
+                  <h1 className="text-3xl font-bold">PTM Scheduling System</h1>
+                  <p className="text-sm opacity-90 mt-1">Step By Step School</p>
                 </div>
                 <button
                   onClick={() => setShowLogin(true)}
@@ -509,6 +511,7 @@ const PTMScheduler = () => {
                       setShowConfirmation(false);
                       // Reset form after closing
                       setStudentName('');
+                      setStudentClass('');
                       setStudentSection('');
                       setSelectedTeachers([]);
                     }}
@@ -534,7 +537,7 @@ const PTMScheduler = () => {
             {/* Student Details Form */}
             <div className="p-6 border-b bg-gray-50">
               <h3 className="text-lg font-bold mb-4">Student Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
                   <input
@@ -544,6 +547,20 @@ const PTMScheduler = () => {
                     placeholder="Full Name"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
                   />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
+                  <select
+                    value={studentClass}
+                    onChange={(e) => setStudentClass(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  >
+                    <option value="">Select Grade</option>
+                    {sheets.map(grade => (
+                      <option key={grade} value={grade}>{grade}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>

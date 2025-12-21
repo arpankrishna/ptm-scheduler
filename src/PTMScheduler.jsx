@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, CheckCircle, Coffee, Play, Pause, Calendar, User, Lock } from 'lucide-react';
+import { Download, CheckCircle, Coffee, Play, Pause, Calendar, User, Lock, Upload } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 
 // Initialize Supabase client
@@ -8,13 +8,13 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const PTMScheduler = () => {
-  // Teacher data by grade
-  const teacherData = {
+  // Teacher data by grade - now loaded from database
+  const [teacherData, setTeacherData] = useState({
     'IX': ['AABHA S', 'AKANSHA G', 'ALISHA N', 'ANCHAL K', 'ANURADHA M', 'ARCHANA S', 'ARTI V', 'ASITA T', 'BHAWNA K', 'CHANDRANEEV D', 'DEBJANI B', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'GEETA K', 'GUNJANH S', 'HEEMAKSHI S', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'JUHI', 'KARUNA A', 'KRISHNA G', 'MANISHA A', 'MANPREET K', 'NEELAM G', 'PINKI T', 'POOJA P', 'PRACHI J', 'PRAMIT S', 'PRATIBHA M', 'PRAVEEN R', 'PRITHA C', 'RAJANI R', 'RAJASHREE M', 'RENU S', 'RINKU C', 'ROMYARUP M', 'RUCHI M', 'SANA J', 'SANA N', 'SEEMA S', 'SEEMA V', 'SHIBANI', 'SHREYA N', 'SHRUTI J', 'SNEHA M', 'SUHANA A', 'SWAYTHA S', 'TARUN N', 'TARUNA T', 'VANITA K'],
     'X': ['AABHA S', 'AKANSHA G', 'ALISHA N', 'ANUPMA S', 'ANURADHA M', 'ARPAN D', 'ARPITA H', 'ARTI V', 'ASITA T', 'BHAWNA K', 'DEBJANI B', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'HEEMAKSHI S', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'JUHI M', 'KANICA S', 'KARUNA A', 'KISHAN S', 'MANISHA A', 'MANPREET K', 'MEGHALI R', 'PINKI T', 'PRACHI J', 'PUNEETA S', 'PURNA C', 'RAJANI R', 'RAJASHREE M', 'RAJEEV S', 'RENU S', 'RINKU C', 'ROMYARUP M', 'RUCHI K', 'SANDHYA T', 'SEEMA V', 'SHEFALI M', 'SHRUTI N', 'SMITA K', 'STEPHAN E', 'SUMA S', 'SWARNA J', 'SWAYTHA S', 'VANITA K'],
     'XI': ['ADITI G', 'AKANSHA G', 'APOORVA S', 'ARPAN D', 'ARTI V', 'BHAWNA K', 'DEBJANI B', 'DEEPA G', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'KARUNA A', 'KK TANWANI', 'MANPREET K', 'NEELAM G', 'NEERA S', 'POOJA P', 'PRAMIT S', 'PRATIBHA M', 'PRAVEEN R', 'PRITHA C', 'PUNEETA S', 'PURNA C', 'RACHNA S', 'RAFIA Z', 'RAJEEV S', 'RENU S', 'ROMYARUP M', 'RUCHI K', 'RUCHI M', 'SANDHYA T', 'SEEMA S', 'SHEFALI M', 'SHREYA N', 'SNEHAL P', 'SUMA S', 'SWAYTHA S', 'TARUN N', 'URMI D', 'VANITA K', 'VIBHOR V'],
     'XII': ['ADITI G', 'ALISHA N', 'ANUBHA P', 'ANURADHA M', 'APOORVA S', 'ARPAN D', 'ARPITA H', 'ASITA T', 'DEEPA G', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'GUNJANH S', 'HEEMAKSHI S', 'HEPZIBAH R', 'JAYITA D', 'KANICA S', 'KARUNA A', 'KISHAN S', 'KK TANWANI', 'MAMTA', 'MANISHA A', 'POOJA P', 'PRACHI J', 'PRAMIT S', 'PRATIBHA M', 'PRITHA C', 'PUNEETA S', 'PURNA C', 'RACHNA S', 'RAFIA', 'RAJANI R', 'RAJEEV S', 'REENA B', 'ROMYARUP M', 'RUCHI K', 'RUCHI M', 'SANA N', 'SANDHYA T', 'SEEMA S', 'SHEFALI M', 'SNEHAL P', 'STEPHAN', 'SUMA S', 'SWAYTHA S', 'URMI D', 'VIJAYASHREE R']
-  };
+  });
 
   // Phase definitions
   const phases = {
@@ -52,6 +52,8 @@ const PTMScheduler = () => {
   const [slideshowMode, setSlideshowMode] = useState(false);
   const [currentSlideGrade, setCurrentSlideGrade] = useState(0);
   const [currentSlidePage, setCurrentSlidePage] = useState(0); // For teacher pagination
+  const [showTeacherUpload, setShowTeacherUpload] = useState(false); // Teacher upload modal
+  const [uploadedTeachers, setUploadedTeachers] = useState(null); // Preview uploaded data
   
   const TEACHERS_PER_PAGE = 10; // Show 10 teachers per screen
   
@@ -67,7 +69,51 @@ const PTMScheduler = () => {
   useEffect(() => {
     loadBookings();
     loadTeacherStatus();
+    loadTeachersFromDatabase();
   }, []);
+
+  const loadTeachersFromDatabase = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('teachers')
+        .select('*')
+        .order('teacher_name');
+
+      if (error) {
+        console.error('Error loading teachers from database:', error);
+        console.log('Using default hardcoded teacher list');
+        return;
+      }
+
+      if (data && data.length > 0) {
+        // Group teachers by grade
+        const grouped = {
+          'IX': [],
+          'X': [],
+          'XI': [],
+          'XII': []
+        };
+
+        data.forEach(teacher => {
+          if (grouped[teacher.grade]) {
+            grouped[teacher.grade].push(teacher.teacher_name);
+          }
+        });
+
+        // Sort each grade's teachers alphabetically
+        Object.keys(grouped).forEach(grade => {
+          grouped[grade].sort();
+        });
+
+        console.log('Loaded teachers from database:', grouped);
+        setTeacherData(grouped);
+      } else {
+        console.log('No teachers in database, using defaults');
+      }
+    } catch (error) {
+      console.error('Exception loading teachers:', error);
+    }
+  };
 
   // Real-time subscriptions
   useEffect(() => {
@@ -365,6 +411,140 @@ const PTMScheduler = () => {
       
     if (error) {
       console.error('Error clearing bookings:', error);
+    }
+  };
+
+  // Teacher upload functions
+  const handleExcelUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        // Parse Excel file using SheetJS (XLSX library loaded via CDN)
+        const data = new Uint8Array(e.target.result);
+        const workbook = window.XLSX.read(data, { type: 'array' });
+        
+        // Get first sheet
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        
+        // Convert to JSON
+        const jsonData = window.XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+        
+        // Parse teacher data
+        const grades = ['IX', 'X', 'XI', 'XII'];
+        const parsedData = {
+          'IX': [],
+          'X': [],
+          'XI': [],
+          'XII': []
+        };
+        
+        // Assuming first row is header with grade names
+        const headerRow = jsonData[0];
+        const gradeColumns = {};
+        
+        headerRow.forEach((header, index) => {
+          if (grades.includes(header)) {
+            gradeColumns[header] = index;
+          }
+        });
+        
+        // Parse teachers from each column
+        for (let i = 1; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          grades.forEach(grade => {
+            const colIndex = gradeColumns[grade];
+            if (colIndex !== undefined && row[colIndex]) {
+              const teacherName = String(row[colIndex]).trim();
+              if (teacherName && !parsedData[grade].includes(teacherName)) {
+                parsedData[grade].push(teacherName);
+              }
+            }
+          });
+        }
+        
+        // Sort teachers alphabetically
+        Object.keys(parsedData).forEach(grade => {
+          parsedData[grade].sort();
+        });
+        
+        setUploadedTeachers(parsedData);
+        
+      } catch (error) {
+        console.error('Error parsing Excel:', error);
+        alert('Error parsing Excel file. Please ensure it has columns IX, X, XI, XII with teacher names.');
+      }
+    };
+    
+    reader.readAsArrayBuffer(file);
+  };
+
+  const saveUploadedTeachers = async () => {
+    if (!uploadedTeachers) return;
+    
+    try {
+      // Step 1: Clear existing teachers from database
+      console.log('Clearing existing teachers from database...');
+      const { error: deleteError } = await supabase
+        .from('teachers')
+        .delete()
+        .neq('id', '00000000-0000-0000-0000-000000000000');
+      
+      if (deleteError) {
+        console.error('Error clearing teachers:', deleteError);
+        alert('Error clearing old teacher data. Please try again.');
+        return;
+      }
+      
+      // Step 2: Prepare new teacher records
+      const teacherRecords = [];
+      const grades = ['IX', 'X', 'XI', 'XII'];
+      
+      grades.forEach(grade => {
+        uploadedTeachers[grade].forEach(teacherName => {
+          teacherRecords.push({
+            teacher_name: teacherName,
+            grade: grade
+          });
+        });
+      });
+      
+      console.log(`Uploading ${teacherRecords.length} teachers to database...`);
+      
+      // Step 3: Insert new teachers in batches (Supabase limit is ~1000 per insert)
+      const batchSize = 100;
+      for (let i = 0; i < teacherRecords.length; i += batchSize) {
+        const batch = teacherRecords.slice(i, i + batchSize);
+        
+        const { error: insertError } = await supabase
+          .from('teachers')
+          .insert(batch);
+        
+        if (insertError) {
+          console.error('Error inserting batch:', insertError);
+          alert(`Error uploading teachers (batch ${Math.floor(i/batchSize) + 1}). Please try again.`);
+          return;
+        }
+      }
+      
+      console.log('✅ All teachers uploaded successfully!');
+      
+      // Step 4: Update local state
+      setTeacherData(uploadedTeachers);
+      
+      // Step 5: Close modal and reset
+      setShowTeacherUpload(false);
+      setUploadedTeachers(null);
+      
+      // Step 6: Show success message
+      alert(`✅ Teacher list updated successfully!\n\n${teacherRecords.length} teachers saved to database.\n\nChanges are now permanent.`);
+      
+    } catch (error) {
+      console.error('Exception saving teachers:', error);
+      alert('Unexpected error saving teachers. Check console for details.');
     }
   };
 
@@ -794,6 +974,13 @@ const PTMScheduler = () => {
               </div>
               <div className="flex gap-2 flex-wrap">
                 <button
+                  onClick={() => setShowTeacherUpload(true)}
+                  className="flex items-center gap-2 bg-purple-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-600"
+                >
+                  <Upload size={18} />
+                  Upload Teachers
+                </button>
+                <button
                   onClick={() => setSlideshowMode(!slideshowMode)}
                   className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold ${
                     slideshowMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-yellow-400 text-gray-800 hover:bg-yellow-500'
@@ -965,6 +1152,84 @@ const PTMScheduler = () => {
               <span>On Break</span>
             </div>
           </div>
+
+          {/* Teacher Upload Modal */}
+          {showTeacherUpload && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-2xl font-bold mb-4 text-indigo-700">Upload Teacher List</h2>
+                
+                {!uploadedTeachers ? (
+                  <div>
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+                      <p className="text-blue-800 mb-2"><strong>📋 Instructions:</strong></p>
+                      <ul className="text-sm text-blue-700 list-disc list-inside space-y-1">
+                        <li>Excel file should have columns: <strong>IX, X, XI, XII</strong></li>
+                        <li>Each column contains teacher names for that grade</li>
+                        <li>First row should be the header (grade names)</li>
+                        <li>Teacher names from row 2 onwards</li>
+                      </ul>
+                    </div>
+
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      onChange={handleExcelUpload}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4"
+                    />
+
+                    <div className="mt-6 flex gap-3">
+                      <button
+                        onClick={() => setShowTeacherUpload(false)}
+                        className="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="bg-green-50 border-l-4 border-green-400 p-4 mb-6">
+                      <p className="text-green-800 font-semibold mb-2">✅ File parsed successfully!</p>
+                      <p className="text-sm text-green-700">Review the teacher list below and click "Save" to update.</p>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                      {['IX', 'X', 'XI', 'XII'].map(grade => (
+                        <div key={grade} className="border rounded-lg p-4">
+                          <h3 className="font-bold text-lg text-indigo-700 mb-2">Grade {grade}</h3>
+                          <p className="text-sm text-gray-600 mb-2">{uploadedTeachers[grade].length} teachers</p>
+                          <div className="max-h-48 overflow-y-auto text-xs">
+                            {uploadedTeachers[grade].map((teacher, idx) => (
+                              <div key={idx} className="py-1 border-b last:border-b-0">{teacher}</div>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-3">
+                      <button
+                        onClick={saveUploadedTeachers}
+                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700"
+                      >
+                        ✓ Save Teacher List
+                      </button>
+                      <button
+                        onClick={() => {
+                          setUploadedTeachers(null);
+                          setShowTeacherUpload(false);
+                        }}
+                        className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

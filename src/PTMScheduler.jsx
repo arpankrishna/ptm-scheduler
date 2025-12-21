@@ -8,12 +8,12 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const PTMScheduler = () => {
-  // Teacher data by grade - now loaded from database
+  // Teacher data by grade - loaded from database only
   const [teacherData, setTeacherData] = useState({
-    'IX': ['AABHA S', 'AKANSHA G', 'ALISHA N', 'ANCHAL K', 'ANURADHA M', 'ARCHANA S', 'ARTI V', 'ASITA T', 'BHAWNA K', 'CHANDRANEEV D', 'DEBJANI B', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'GEETA K', 'GUNJANH S', 'HEEMAKSHI S', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'JUHI', 'KARUNA A', 'KRISHNA G', 'MANISHA A', 'MANPREET K', 'NEELAM G', 'PINKI T', 'POOJA P', 'PRACHI J', 'PRAMIT S', 'PRATIBHA M', 'PRAVEEN R', 'PRITHA C', 'RAJANI R', 'RAJASHREE M', 'RENU S', 'RINKU C', 'ROMYARUP M', 'RUCHI M', 'SANA J', 'SANA N', 'SEEMA S', 'SEEMA V', 'SHIBANI', 'SHREYA N', 'SHRUTI J', 'SNEHA M', 'SUHANA A', 'SWAYTHA S', 'TARUN N', 'TARUNA T', 'VANITA K'],
-    'X': ['AABHA S', 'AKANSHA G', 'ALISHA N', 'ANUPMA S', 'ANURADHA M', 'ARPAN D', 'ARPITA H', 'ARTI V', 'ASITA T', 'BHAWNA K', 'DEBJANI B', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'HEEMAKSHI S', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'JUHI M', 'KANICA S', 'KARUNA A', 'KISHAN S', 'MANISHA A', 'MANPREET K', 'MEGHALI R', 'PINKI T', 'PRACHI J', 'PUNEETA S', 'PURNA C', 'RAJANI R', 'RAJASHREE M', 'RAJEEV S', 'RENU S', 'RINKU C', 'ROMYARUP M', 'RUCHI K', 'SANDHYA T', 'SEEMA V', 'SHEFALI M', 'SHRUTI N', 'SMITA K', 'STEPHAN E', 'SUMA S', 'SWARNA J', 'SWAYTHA S', 'VANITA K'],
-    'XI': ['ADITI G', 'AKANSHA G', 'APOORVA S', 'ARPAN D', 'ARTI V', 'BHAWNA K', 'DEBJANI B', 'DEEPA G', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'HEMA L', 'HEPZIBAH R', 'JAYITA D', 'KARUNA A', 'KK TANWANI', 'MANPREET K', 'NEELAM G', 'NEERA S', 'POOJA P', 'PRAMIT S', 'PRATIBHA M', 'PRAVEEN R', 'PRITHA C', 'PUNEETA S', 'PURNA C', 'RACHNA S', 'RAFIA Z', 'RAJEEV S', 'RENU S', 'ROMYARUP M', 'RUCHI K', 'RUCHI M', 'SANDHYA T', 'SEEMA S', 'SHEFALI M', 'SHREYA N', 'SNEHAL P', 'SUMA S', 'SWAYTHA S', 'TARUN N', 'URMI D', 'VANITA K', 'VIBHOR V'],
-    'XII': ['ADITI G', 'ALISHA N', 'ANUBHA P', 'ANURADHA M', 'APOORVA S', 'ARPAN D', 'ARPITA H', 'ASITA T', 'DEEPA G', 'DEVIKA N', 'DIVYA T', 'DIYA S', 'EISHWINDER K', 'GOKUL N', 'GUNJANH S', 'HEEMAKSHI S', 'HEPZIBAH R', 'JAYITA D', 'KANICA S', 'KARUNA A', 'KISHAN S', 'KK TANWANI', 'MAMTA', 'MANISHA A', 'POOJA P', 'PRACHI J', 'PRAMIT S', 'PRATIBHA M', 'PRITHA C', 'PUNEETA S', 'PURNA C', 'RACHNA S', 'RAFIA', 'RAJANI R', 'RAJEEV S', 'REENA B', 'ROMYARUP M', 'RUCHI K', 'RUCHI M', 'SANA N', 'SANDHYA T', 'SEEMA S', 'SHEFALI M', 'SNEHAL P', 'STEPHAN', 'SUMA S', 'SWAYTHA S', 'URMI D', 'VIJAYASHREE R']
+    'IX': [],
+    'X': [],
+    'XI': [],
+    'XII': []
   });
 
   // Phase definitions
@@ -608,7 +608,7 @@ const PTMScheduler = () => {
             value={loginPassword}
             onChange={(e) => setLoginPassword(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-            placeholder={loginType === 'admin' ? 'Admin Password' : 'Your Name (e.g., ARPAN D)'}
+            placeholder={loginType === 'admin' ? 'Admin Password' : 'Your Full Name (e.g., ARPAN DEB)'}
             className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500"
           />
 

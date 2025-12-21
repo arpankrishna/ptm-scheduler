@@ -82,6 +82,7 @@ const PTMScheduler = () => {
       if (error) {
         console.error('Error loading teachers from database:', error);
         console.log('Using default hardcoded teacher list');
+        setIsLoading(false);
         return;
       }
 
@@ -112,6 +113,8 @@ const PTMScheduler = () => {
       }
     } catch (error) {
       console.error('Exception loading teachers:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 

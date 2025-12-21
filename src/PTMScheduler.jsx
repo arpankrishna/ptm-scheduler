@@ -34,7 +34,7 @@ const PTMScheduler = () => {
       teachers.forEach(teacher => teacherSet.add(teacher));
     });
     return Array.from(teacherSet).sort();
-  }, []);
+  }, [teacherData]); // Recompute when teacherData changes!
 
   // State
   const [userRole, setUserRole] = useState(null); // null, 'teacher', 'admin'
@@ -233,6 +233,17 @@ const PTMScheduler = () => {
         alert('Incorrect admin password!');
       }
     } else {
+      // Check if teachers have loaded
+      if (isLoading) {
+        alert('Please wait, loading teacher data...');
+        return;
+      }
+      
+      if (allTeachers.length === 0) {
+        alert('No teachers found in database. Please contact admin to upload teacher list.');
+        return;
+      }
+      
       if (allTeachers.includes(loginPassword.toUpperCase())) {
         setUserRole('teacher');
         setLoggedInTeacher(loginPassword.toUpperCase());

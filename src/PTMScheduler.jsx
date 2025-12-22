@@ -730,7 +730,7 @@ const PTMScheduler = () => {
                 <div className="flex gap-2">
                   <button
                     onClick={() => {
-                      setShowTrackingView(false);
+                      setShowTrackingView(true);
                       setTrackingStudentName('');
                       setTrackingStudentSection('');
                       setTrackedBookings([]);

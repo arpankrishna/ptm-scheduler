@@ -863,7 +863,7 @@ const PTMScheduler = () => {
               <div className="p-6">
                 <div className="mb-6 flex items-center justify-between">
                   <div>
-                    <h2 className="text-2xl font-bold text-indigo-700">📅 My Appointments</h2>
+                    <h2 className="text-2xl font-bold text-indigo-700">📋 My Appointments</h2>
                     <p className="text-sm text-gray-600 mt-1">{ptmDate}</p>
                   </div>
                   <button

@@ -706,7 +706,9 @@ const PTMScheduler = () => {
                       <div key={idx} className="bg-white rounded p-3 mb-2 border border-green-300">
                         <p className="font-bold text-lg text-green-800">✓ {conf.teacher}</p>
                         <p className="text-gray-700">Grade: {conf.grade}</p>
-                        <p className="text-gray-700">{conf.phase} - Slot {conf.slot}</p>
+                        <p className="text-gray-700">
+                          {conf.phase} - Slot {conf.slot} ({phases[conf.phase].timings[conf.slot - 1]})
+                        </p>
                       </div>
                     ))}
                   </div>
@@ -804,7 +806,7 @@ const PTMScheduler = () => {
                       <div>
                         <p className="font-semibold">{selection.teacher}</p>
                         <p className="text-sm text-gray-600">
-                          Grade {selection.grade} • {phases[selection.phase].name} • Slot {selection.slot}
+                          Grade {selection.grade} • {phases[selection.phase].name} • Slot {selection.slot} ({phases[selection.phase].timings[selection.slot - 1]})
                         </p>
                       </div>
                       <button

@@ -16,11 +16,29 @@ const PTMScheduler = () => {
     'XII': []
   });
 
-  // Phase definitions
+  // Phase definitions with exact timings and roll number ranges
   const phases = {
-    phase1: { name: 'Phase 1', time: '8:15 AM - 9:40 AM', slots: 16 },
-    phase2: { name: 'Phase 2', time: '9:55 AM - 11:20 AM', slots: 16 },
-    phase3: { name: 'Phase 3', time: '11:35 AM - 1:00 PM', slots: 16 }
+    phase1: {
+      name: 'Phase 1',
+      time: '8:15 AM - 9:40 AM',
+      rollNumbers: 'Roll Numbers: 21-30',
+      slots: 18,
+      timings: ['8:15', '8:20', '8:25', '8:30', '8:35', '8:40', '8:45', '8:50', '8:55', '9:00', '9:05', '9:10', '9:15', '9:20', '9:25', '9:30', '9:35', '9:40']
+    },
+    phase2: {
+      name: 'Phase 2',
+      time: '9:55 AM - 11:20 AM',
+      rollNumbers: 'Roll Numbers: 1-10',
+      slots: 18,
+      timings: ['9:55', '10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30', '10:35', '10:40', '10:45', '10:50', '10:55', '11:00', '11:05', '11:10', '11:15', '11:20']
+    },
+    phase3: {
+      name: 'Phase 3',
+      time: '11:35 AM - 1:00 PM',
+      rollNumbers: 'Roll Numbers: 11-20',
+      slots: 18,
+      timings: ['11:35', '11:40', '11:45', '11:50', '11:55', '12:00', '12:05', '12:10', '12:15', '12:20', '12:25', '12:30', '12:35', '12:40', '12:45', '12:50', '12:55', '13:00']
+    }
   };
 
   const sheets = ['IX', 'X', 'XI', 'XII'];
@@ -903,6 +921,7 @@ const PTMScheduler = () => {
                 >
                   <div>{phaseInfo.name}</div>
                   <div className="text-xs opacity-80">{phaseInfo.time}</div>
+                  <div className="text-xs opacity-70">{phaseInfo.rollNumbers}</div>
                 </button>
               ))}
             </div>
@@ -926,38 +945,65 @@ const PTMScheduler = () => {
                             ? 'bg-green-100 border-green-500'
                             : booking.status === 'not_met'
                             ? 'bg-orange-100 border-orange-500'
+                            : booking.status === 'met_later'
+                            ? 'bg-yellow-100 border-yellow-500'
                             : 'bg-blue-50 border-blue-500'
                           : 'bg-gray-50 border-gray-300'
                       }`}
                     >
-                      <div className="font-bold text-sm mb-2">Slot {slot}</div>
+                      <div className="font-bold text-sm mb-1">Slot {slot}</div>
+                      <div className="text-xs text-gray-600 mb-2">{phases[activePhase].timings[slot - 1]}</div>
                       {booking ? (
                         <div>
                           <div className="text-sm font-medium mb-2">{booking.studentName}</div>
                           <div className="text-xs text-gray-600 mb-2">
                             {booking.studentClass}-{booking.studentSection}
                           </div>
-                          {booking.status === 'pending' && (
-                            <div className="flex flex-col gap-1">
-                              <button
-                                onClick={() => updateBookingStatus(key, 'done')}
-                                className="bg-green-600 text-white text-xs px-2 py-1 rounded hover:bg-green-700"
-                              >
-                                ✓ Done
-                              </button>
-                              <button
-                                onClick={() => updateBookingStatus(key, 'not_met')}
-                                className="bg-orange-600 text-white text-xs px-2 py-1 rounded hover:bg-orange-700"
-                              >
-                                ✗ Not Met
-                              </button>
-                            </div>
-                          )}
+                          {/* Always show buttons - teachers can update status anytime */}
+                          <div className="flex flex-col gap-1 mb-2">
+                            <button
+                              onClick={() => updateBookingStatus(key, 'done')}
+                              className={`text-white text-xs px-2 py-1 rounded ${
+                                booking.status === 'done' 
+                                  ? 'bg-green-700 font-bold' 
+                                  : 'bg-green-600 hover:bg-green-700'
+                              }`}
+                            >
+                              ✓ Done
+                            </button>
+                            <button
+                              onClick={() => updateBookingStatus(key, 'not_met')}
+                              className={`text-white text-xs px-2 py-1 rounded ${
+                                booking.status === 'not_met' 
+                                  ? 'bg-orange-700 font-bold' 
+                                  : 'bg-orange-600 hover:bg-orange-700'
+                              }`}
+                            >
+                              ✗ Not Met
+                            </button>
+                            <button
+                              onClick={() => updateBookingStatus(key, 'met_later')}
+                              className={`text-white text-xs px-2 py-1 rounded ${
+                                booking.status === 'met_later' 
+                                  ? 'bg-yellow-700 font-bold' 
+                                  : 'bg-yellow-600 hover:bg-yellow-700'
+                              }`}
+                            >
+                              ⏰ Met Later
+                            </button>
+                          </div>
+                          {/* Show current status as text */}
                           {booking.status === 'done' && (
-                            <div className="text-green-700 text-xs font-semibold">✓ Completed</div>
+                            <div className="text-green-700 text-xs font-semibold">Current: ✓ Completed</div>
                           )}
                           {booking.status === 'not_met' && (
-                            <div className="text-orange-700 text-xs font-semibold">✗ Not Met</div>
+                            <div className="text-orange-700 text-xs font-semibold">Current: ✗ Not Met</div>
+                          )}
+                          {booking.status === 'met_later' && (
+                            <div className="text-yellow-700 text-xs font-semibold">Current: ⏰ Met Later</div>
+                          )}
+                          {booking.status === 'pending' && (
+                            <div className="text-blue-700 text-xs font-semibold">Current: Pending</div>
                           )}
                         </div>
                       ) : (
@@ -1057,6 +1103,7 @@ const PTMScheduler = () => {
               >
                 <div>{phaseInfo.name}</div>
                 <div className="text-xs opacity-80">{phaseInfo.time}</div>
+                <div className="text-xs opacity-70">{phaseInfo.rollNumbers}</div>
               </button>
             ))}
           </div>
@@ -1081,8 +1128,9 @@ const PTMScheduler = () => {
                 <tr>
                   <th className="border p-2 bg-gray-100 sticky left-0 z-10">Teacher</th>
                   {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => (
-                    <th key={slot} className="border p-2 bg-gray-100 text-sm">
-                      {slot}
+                    <th key={slot} className="border p-2 bg-gray-100 text-xs">
+                      <div className="font-bold">{slot}</div>
+                      <div className="font-normal text-gray-600">{phases[activePhase].timings[slot - 1]}</div>
                     </th>
                   ))}
                 </tr>
@@ -1121,6 +1169,8 @@ const PTMScheduler = () => {
                                     ? 'bg-green-200 font-semibold'
                                     : booking.status === 'not_met'
                                     ? 'bg-orange-200 font-semibold'
+                                    : booking.status === 'met_later'
+                                    ? 'bg-yellow-200 font-semibold'
                                     : 'bg-blue-100'
                                   : 'bg-gray-50'
                               }`}
@@ -1162,7 +1212,11 @@ const PTMScheduler = () => {
               <span>Not Met</span>
             </div>
             <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-yellow-100 border-2 border-yellow-500 rounded"></div>
+              <div className="w-6 h-6 bg-yellow-200 border-2 border-yellow-500 rounded"></div>
+              <span>Met Later</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
               <span>On Break</span>
             </div>
           </div>
@@ -1318,7 +1372,7 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
             <option value="">Select Phase</option>
             {Object.entries(phases).map(([key, info]) => (
               <option key={key} value={key}>
-                {info.name} ({info.time})
+                {info.name} ({info.time}) - {info.rollNumbers}
               </option>
             ))}
           </select>
@@ -1336,7 +1390,9 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
           >
             <option value="">Select Slot</option>
             {availableSlots.map(slot => (
-              <option key={slot} value={slot}>Slot {slot}</option>
+              <option key={slot} value={slot}>
+                Slot {slot} - {phases[selectedPhase]?.timings[slot - 1]}
+              </option>
             ))}
           </select>
           {selectedPhase && availableSlots.length === 0 && (

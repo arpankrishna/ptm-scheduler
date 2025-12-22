@@ -82,6 +82,12 @@ const PTMScheduler = () => {
   const [selectedTeachers, setSelectedTeachers] = useState([]); // Array of { teacher, grade, phase, slot }
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmations, setConfirmations] = useState([]);
+  
+  // Parent tracking view state
+  const [showTrackingView, setShowTrackingView] = useState(false);
+  const [trackingStudentName, setTrackingStudentName] = useState('');
+  const [trackingStudentSection, setTrackingStudentSection] = useState('');
+  const [trackedBookings, setTrackedBookings] = useState([]);
 
   // Load data
   useEffect(() => {
@@ -277,6 +283,49 @@ const PTMScheduler = () => {
     setUserRole(null);
     setLoggedInTeacher('');
     setSlideshowMode(false);
+  };
+
+  // Parent tracking lookup
+  const handleTrackBookings = async () => {
+    if (!trackingStudentName || !trackingStudentSection) {
+      alert('Please enter both student name and section');
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('bookings')
+      .select('*')
+      .ilike('student_name', trackingStudentName.trim())
+      .ilike('student_section', trackingStudentSection.trim())
+      .order('phase', { ascending: true })
+      .order('slot_number', { ascending: true });
+
+    if (error) {
+      console.error('Error fetching bookings:', error);
+      alert('Error loading appointments. Please try again.');
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert('No appointments found for this student. Please check the name and section.');
+      return;
+    }
+
+    // Format the bookings with teacher status
+    const formattedBookings = data.map(booking => ({
+      id: booking.id,
+      teacher: booking.teacher,
+      grade: booking.grade,
+      phase: booking.phase,
+      slot: booking.slot_number,
+      timing: phases[booking.phase].timings[booking.slot_number - 1],
+      phaseName: phases[booking.phase].name,
+      status: booking.status,
+      teacherStatus: teacherStatus[booking.teacher]?.isOnBreak ? 'break' : 'ready'
+    }));
+
+    setTrackedBookings(formattedBookings);
+    setShowTrackingView(true);
   };
 
   // Booking functions
@@ -678,13 +727,27 @@ const PTMScheduler = () => {
                   <h1 className="text-3xl font-bold">PTM Scheduling System</h1>
                   <p className="text-sm opacity-90 mt-1">Step By Step School</p>
                 </div>
-                <button
-                  onClick={() => setShowLogin(true)}
-                  className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50"
-                >
-                  <User size={18} />
-                  Staff Login
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowTrackingView(false);
+                      setTrackingStudentName('');
+                      setTrackingStudentSection('');
+                      setTrackedBookings([]);
+                    }}
+                    className="flex items-center gap-2 bg-yellow-400 text-gray-800 px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500"
+                  >
+                    <Calendar size={18} />
+                    View My Appointments
+                  </button>
+                  <button
+                    onClick={() => setShowLogin(true)}
+                    className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50"
+                  >
+                    <User size={18} />
+                    Staff Login
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -743,6 +806,220 @@ const PTMScheduler = () => {
               </div>
             )}
 
+            {/* Tracking View - View My Appointments */}
+            {showTrackingView && !trackedBookings.length && (
+              <div className="p-6">
+                <div className="max-w-md mx-auto">
+                  <h2 className="text-2xl font-bold text-indigo-700 mb-4">🔍 View My Appointments</h2>
+                  <p className="text-gray-600 mb-6">Enter student details to view your confirmed appointments</p>
+                  
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
+                      <input
+                        type="text"
+                        value={trackingStudentName}
+                        onChange={(e) => setTrackingStudentName(e.target.value)}
+                        placeholder="e.g., Meera Vaidya"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
+                      <input
+                        type="text"
+                        value={trackingStudentSection}
+                        onChange={(e) => setTrackingStudentSection(e.target.value)}
+                        placeholder="e.g., A"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      />
+                    </div>
+                    
+                    <button
+                      onClick={handleTrackBookings}
+                      className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700"
+                    >
+                      View My Appointments
+                    </button>
+                    
+                    <button
+                      onClick={() => setShowTrackingView(false)}
+                      className="w-full bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400"
+                    >
+                      Back to Booking
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Tracking View - Display Appointments */}
+            {showTrackingView && trackedBookings.length > 0 && (
+              <div className="p-6">
+                <div className="mb-6 flex items-center justify-between">
+                  <h2 className="text-2xl font-bold text-indigo-700">📅 My Appointments</h2>
+                  <button
+                    onClick={() => {
+                      setShowTrackingView(false);
+                      setTrackedBookings([]);
+                      setTrackingStudentName('');
+                      setTrackingStudentSection('');
+                    }}
+                    className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-400"
+                  >
+                    Back
+                  </button>
+                </div>
+                
+                <div className="bg-indigo-50 rounded-lg p-4 mb-6">
+                  <p className="text-indigo-900"><strong>Student:</strong> {trackingStudentName}</p>
+                  <p className="text-indigo-900"><strong>Section:</strong> {trackingStudentSection}</p>
+                  <p className="text-indigo-900"><strong>Total Appointments:</strong> {trackedBookings.length}</p>
+                </div>
+
+                {/* Next Appointment Highlight */}
+                {(() => {
+                  const now = new Date();
+                  const currentHour = now.getHours();
+                  const currentMinute = now.getMinutes();
+                  const currentTimeInMinutes = currentHour * 60 + currentMinute;
+                  
+                  // Find next appointment
+                  const nextBooking = trackedBookings.find(booking => {
+                    const [hour, minute] = booking.timing.split(':').map(Number);
+                    const bookingTimeInMinutes = hour * 60 + minute;
+                    return bookingTimeInMinutes >= currentTimeInMinutes;
+                  });
+
+                  if (nextBooking) {
+                    return (
+                      <div className="bg-yellow-100 border-2 border-yellow-400 rounded-lg p-4 mb-6">
+                        <h3 className="font-bold text-yellow-900 mb-2">⏰ NEXT APPOINTMENT:</h3>
+                        <p className="text-lg font-bold text-yellow-900">{nextBooking.teacher}</p>
+                        <p className="text-yellow-800">
+                          {nextBooking.phaseName} - Slot {nextBooking.slot} ({nextBooking.timing})
+                        </p>
+                        <div className="mt-2">
+                          {nextBooking.teacherStatus === 'break' ? (
+                            <span className="inline-block bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                              ☕ Teacher on Break
+                            </span>
+                          ) : (
+                            <span className="inline-block bg-green-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                              ✓ Teacher Ready
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+
+                {/* All Appointments List */}
+                <div className="space-y-4">
+                  {trackedBookings.map((booking, idx) => {
+                    const now = new Date();
+                    const currentHour = now.getHours();
+                    const currentMinute = now.getMinutes();
+                    const currentTimeInMinutes = currentHour * 60 + currentMinute;
+                    const [bookingHour, bookingMinute] = booking.timing.split(':').map(Number);
+                    const bookingTimeInMinutes = bookingHour * 60 + bookingMinute;
+                    const isPast = bookingTimeInMinutes < currentTimeInMinutes;
+                    const isNext = !isPast && trackedBookings.findIndex(b => {
+                      const [h, m] = b.timing.split(':').map(Number);
+                      return (h * 60 + m) >= currentTimeInMinutes;
+                    }) === idx;
+
+                    return (
+                      <div 
+                        key={booking.id} 
+                        className={`border-2 rounded-lg p-4 ${
+                          isNext 
+                            ? 'border-yellow-400 bg-yellow-50' 
+                            : isPast 
+                            ? 'border-gray-300 bg-gray-50 opacity-60'
+                            : 'border-indigo-300 bg-white'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <h3 className="text-lg font-bold text-gray-800">{booking.teacher}</h3>
+                            <p className="text-gray-600">Grade {booking.grade}</p>
+                            <p className="text-indigo-700 font-semibold">
+                              {booking.phaseName} - Slot {booking.slot} • {booking.timing}
+                            </p>
+                            
+                            {/* Meeting Status */}
+                            <div className="mt-2 flex items-center gap-2">
+                              {booking.status === 'done' && (
+                                <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-semibold">
+                                  ✓ Completed
+                                </span>
+                              )}
+                              {booking.status === 'not_met' && (
+                                <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-semibold">
+                                  ✗ Not Met
+                                </span>
+                              )}
+                              {booking.status === 'met_later' && (
+                                <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-semibold">
+                                  ⏰ Met Later
+                                </span>
+                              )}
+                              {booking.status === 'pending' && !isPast && (
+                                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">
+                                  ⏳ Pending
+                                </span>
+                              )}
+                            </div>
+                            
+                            {/* Teacher Status */}
+                            {booking.status === 'pending' && !isPast && (
+                              <div className="mt-2">
+                                {booking.teacherStatus === 'break' ? (
+                                  <span className="inline-flex items-center text-yellow-700 text-sm">
+                                    <Coffee size={14} className="mr-1" /> Teacher on Break
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center text-green-700 text-sm">
+                                    <CheckCircle size={14} className="mr-1" /> Teacher Ready
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                          
+                          {isNext && !isPast && (
+                            <div className="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">
+                              NEXT
+                            </div>
+                          )}
+                          
+                          {isPast && (
+                            <div className="bg-gray-400 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
+                              PAST
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                
+                <div className="mt-6 bg-blue-50 border-l-4 border-blue-400 p-4">
+                  <p className="text-sm text-blue-800">
+                    <strong>💡 Tip:</strong> Arrive 5 minutes before your slot time. Check teacher status above - 
+                    Green means ready, Yellow means on break. This page updates in real-time!
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Normal Booking Form - Only show if not in tracking view */}
+            {!showTrackingView && (
+              <>
             {/* Instructions */}
             <div className="p-6 bg-blue-50 border-b">
               <h2 className="font-bold text-blue-800 mb-2">📋 How to Book:</h2>
@@ -847,6 +1124,8 @@ const PTMScheduler = () => {
                 Submit All Bookings ({selectedTeachers.length})
               </button>
             </div>
+              </>
+            )}
           </div>
         </div>
       </div>

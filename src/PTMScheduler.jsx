@@ -284,18 +284,23 @@ const PTMScheduler = () => {
     return `${grade}-${teacher}-${phase}-${slot}`;
   };
 
-  const getAvailableSlotsForTeacher = (teacher, grade, phase) => {
+  const getAvailableSlotsForTeacher = (teacher, grade, phase, studentCurrentBookings = []) => {
     const availableSlots = [];
     const totalSlots = phases[phase].slots;
     
     for (let slot = 1; slot <= totalSlots; slot++) {
       // Check if teacher is busy in ANY grade at this phase/slot
-      const isBusy = sheets.some(g => {
+      const teacherIsBusy = sheets.some(g => {
         const key = getBookingKey(g, teacher, phase, slot);
         return bookings[key]; // If booking exists in any grade, teacher is busy
       });
       
-      if (!isBusy) {
+      // Check if student already has a booking at this slot in this phase
+      const studentHasSlotBooked = studentCurrentBookings.some(booking => 
+        booking.phase === phase && booking.slot === slot
+      );
+      
+      if (!teacherIsBusy && !studentHasSlotBooked) {
         availableSlots.push(slot);
       }
     }
@@ -830,6 +835,7 @@ const PTMScheduler = () => {
                 getAvailableSlotsForTeacher={getAvailableSlotsForTeacher}
                 onAddTeacher={handleAddTeacher}
                 studentClass={studentClass}
+                selectedTeachers={selectedTeachers}
               />
 
               {/* Submit Button */}
@@ -1308,13 +1314,13 @@ const PTMScheduler = () => {
 };
 
 // Parent Teacher Selector Component
-const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentClass }) => {
+const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentClass, selectedTeachers }) => {
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [selectedPhase, setSelectedPhase] = useState('');
   const [selectedSlot, setSelectedSlot] = useState('');
 
   const availableSlots = studentClass && selectedTeacher && selectedPhase
-    ? getAvailableSlotsForTeacher(selectedTeacher, studentClass, selectedPhase)
+    ? getAvailableSlotsForTeacher(selectedTeacher, studentClass, selectedPhase, selectedTeachers)
     : [];
 
   const handleAdd = () => {

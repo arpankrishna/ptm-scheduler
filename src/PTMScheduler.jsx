@@ -362,7 +362,8 @@ const PTMScheduler = () => {
         results.push({
           teacher: selection.teacher,
           grade: selection.grade,
-          phase: phases[selection.phase].name,
+          phase: selection.phase, // Store phase key (phase1, phase2, phase3)
+          phaseName: phases[selection.phase].name, // Store phase name for display
           slot: selection.slot
         });
       }
@@ -707,7 +708,7 @@ const PTMScheduler = () => {
                         <p className="font-bold text-lg text-green-800">✓ {conf.teacher}</p>
                         <p className="text-gray-700">Grade: {conf.grade}</p>
                         <p className="text-gray-700">
-                          {conf.phase} - Slot {conf.slot} ({phases[conf.phase].timings[conf.slot - 1]})
+                          {conf.phaseName} - Slot {conf.slot} ({phases[conf.phase].timings[conf.slot - 1]})
                         </p>
                       </div>
                     ))}

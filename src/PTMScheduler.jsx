@@ -88,6 +88,10 @@ const PTMScheduler = () => {
   const [trackingStudentName, setTrackingStudentName] = useState('');
   const [trackingStudentSection, setTrackingStudentSection] = useState('');
   const [trackedBookings, setTrackedBookings] = useState([]);
+  
+  // PTM Date configuration
+  const [ptmDate, setPtmDate] = useState('December 24, 2025'); // Default date
+  const [showDateEditor, setShowDateEditor] = useState(false);
 
   // Load data
   useEffect(() => {
@@ -858,7 +862,10 @@ const PTMScheduler = () => {
             {showTrackingView && trackedBookings.length > 0 && (
               <div className="p-6">
                 <div className="mb-6 flex items-center justify-between">
-                  <h2 className="text-2xl font-bold text-indigo-700">📅 My Appointments</h2>
+                  <div>
+                    <h2 className="text-2xl font-bold text-indigo-700">📅 My Appointments</h2>
+                    <p className="text-sm text-gray-600 mt-1">{ptmDate}</p>
+                  </div>
                   <button
                     onClick={() => {
                       setShowTrackingView(false);
@@ -1322,6 +1329,13 @@ const PTMScheduler = () => {
               </div>
               <div className="flex gap-2 flex-wrap">
                 <button
+                  onClick={() => setShowDateEditor(true)}
+                  className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-600"
+                >
+                  <Calendar size={18} />
+                  PTM Date: {ptmDate}
+                </button>
+                <button
                   onClick={() => setShowTeacherUpload(true)}
                   className="flex items-center gap-2 bg-purple-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-600"
                 >
@@ -1508,6 +1522,49 @@ const PTMScheduler = () => {
               <span>On Break</span>
             </div>
           </div>
+
+          {/* PTM Date Editor Modal */}
+          {showDateEditor && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-8 max-w-md w-full">
+                <h2 className="text-2xl font-bold mb-4 text-indigo-700">📅 Set PTM Date</h2>
+                
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">PTM Date</label>
+                  <input
+                    type="text"
+                    value={ptmDate}
+                    onChange={(e) => setPtmDate(e.target.value)}
+                    placeholder="e.g., December 24, 2025"
+                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <p className="text-xs text-gray-500 mt-2">
+                    This will be displayed on the parent tracking page
+                  </p>
+                </div>
+                
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowDateEditor(false);
+                      alert('PTM date updated to: ' + ptmDate);
+                    }}
+                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700"
+                  >
+                    Save Date
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowDateEditor(false);
+                    }}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Teacher Upload Modal */}
           {showTeacherUpload && (

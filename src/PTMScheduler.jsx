@@ -86,6 +86,7 @@ const PTMScheduler = () => {
   // Parent tracking view state
   const [showTrackingView, setShowTrackingView] = useState(false);
   const [trackingStudentName, setTrackingStudentName] = useState('');
+  const [trackingStudentClass, setTrackingStudentClass] = useState('');
   const [trackingStudentSection, setTrackingStudentSection] = useState('');
   const [trackedBookings, setTrackedBookings] = useState([]);
   
@@ -291,8 +292,8 @@ const PTMScheduler = () => {
 
   // Parent tracking lookup
   const handleTrackBookings = async () => {
-    if (!trackingStudentName || !trackingStudentSection) {
-      alert('Please enter both student name and section');
+    if (!trackingStudentName || !trackingStudentClass || !trackingStudentSection) {
+      alert('Please enter student name, class, and section');
       return;
     }
 
@@ -300,6 +301,7 @@ const PTMScheduler = () => {
       .from('bookings')
       .select('*')
       .ilike('student_name', trackingStudentName.trim())
+      .ilike('student_class', trackingStudentClass.trim())
       .ilike('student_section', trackingStudentSection.trim())
       .order('phase', { ascending: true })
       .order('slot_number', { ascending: true });
@@ -311,7 +313,7 @@ const PTMScheduler = () => {
     }
 
     if (!data || data.length === 0) {
-      alert('No appointments found for this student. Please check the name and section.');
+      alert('No appointments found for this student. Please check the name, class, and section.');
       return;
     }
 
@@ -736,6 +738,7 @@ const PTMScheduler = () => {
                     onClick={() => {
                       setShowTrackingView(true);
                       setTrackingStudentName('');
+                      setTrackingStudentClass('');
                       setTrackingStudentSection('');
                       setTrackedBookings([]);
                     }}
@@ -830,6 +833,21 @@ const PTMScheduler = () => {
                     </div>
                     
                     <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Class/Grade *</label>
+                      <select
+                        value={trackingStudentClass}
+                        onChange={(e) => setTrackingStudentClass(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                      >
+                        <option value="">Select Class</option>
+                        <option value="IX">IX</option>
+                        <option value="X">X</option>
+                        <option value="XI">XI</option>
+                        <option value="XII">XII</option>
+                      </select>
+                    </div>
+                    
+                    <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
                       <input
                         type="text"
@@ -848,7 +866,13 @@ const PTMScheduler = () => {
                     </button>
                     
                     <button
-                      onClick={() => setShowTrackingView(false)}
+                      onClick={() => {
+                        setShowTrackingView(false);
+                        setTrackingStudentName('');
+                        setTrackingStudentClass('');
+                        setTrackingStudentSection('');
+                        setTrackedBookings([]);
+                      }}
                       className="w-full bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400"
                     >
                       Back to Booking
@@ -871,6 +895,7 @@ const PTMScheduler = () => {
                       setShowTrackingView(false);
                       setTrackedBookings([]);
                       setTrackingStudentName('');
+                      setTrackingStudentClass('');
                       setTrackingStudentSection('');
                     }}
                     className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-400"
@@ -881,7 +906,7 @@ const PTMScheduler = () => {
                 
                 <div className="bg-indigo-50 rounded-lg p-4 mb-6">
                   <p className="text-indigo-900"><strong>Student:</strong> {trackingStudentName}</p>
-                  <p className="text-indigo-900"><strong>Section:</strong> {trackingStudentSection}</p>
+                  <p className="text-indigo-900"><strong>Class:</strong> {trackingStudentClass} - {trackingStudentSection}</p>
                   <p className="text-indigo-900"><strong>Total Appointments:</strong> {trackedBookings.length}</p>
                 </div>
 
@@ -1183,27 +1208,6 @@ const PTMScheduler = () => {
               </div>
             )}
 
-            {/* Grade tabs */}
-            <div className="flex gap-1 p-2 bg-gray-100 border-b overflow-x-auto">
-              {teacherGrades.map(grade => {
-                const count = Object.values(bookings).filter(b => 
-                  b.teacher === loggedInTeacher && b.grade === grade
-                ).length;
-                return (
-                  <button
-                    key={grade}
-                    onClick={() => setActiveSheet(grade)}
-                    className={`px-4 py-2 font-semibold rounded-t whitespace-nowrap ${
-                      activeSheet === grade ? 'bg-white text-indigo-600 shadow' : 'bg-gray-200 text-gray-600'
-                    }`}
-                  >
-                    {grade}
-                    {count > 0 && <span className="ml-1 bg-indigo-600 text-white px-1.5 py-0.5 rounded-full text-xs">{count}</span>}
-                  </button>
-                );
-              })}
-            </div>
-
             {/* Phase tabs */}
             <div className="flex gap-1 p-2 bg-gray-50 border-b">
               {Object.entries(phases).map(([phaseKey, phaseInfo]) => (
@@ -1224,12 +1228,22 @@ const PTMScheduler = () => {
             {/* Teacher Schedule Grid */}
             <div className="p-6">
               <h2 className="text-xl font-bold mb-4">
-                {activeSheet} - {phases[activePhase].name}
+                All Appointments - {phases[activePhase].name}
               </h2>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
                 {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => {
-                  const key = getBookingKey(activeSheet, loggedInTeacher, activePhase, slot);
-                  const booking = bookings[key];
+                  // Check ALL grades for this teacher at this phase/slot
+                  let booking = null;
+                  let bookingKey = null;
+                  
+                  for (const grade of sheets) {
+                    const key = getBookingKey(grade, loggedInTeacher, activePhase, slot);
+                    if (bookings[key]) {
+                      booking = bookings[key];
+                      bookingKey = key;
+                      break; // Found booking, stop searching
+                    }
+                  }
                   
                   return (
                     <div
@@ -1250,14 +1264,14 @@ const PTMScheduler = () => {
                       <div className="text-xs text-gray-600 mb-2">{phases[activePhase].timings[slot - 1]}</div>
                       {booking ? (
                         <div>
-                          <div className="text-sm font-medium mb-2">{booking.studentName}</div>
+                          <div className="text-sm font-medium mb-1">{booking.studentName}</div>
                           <div className="text-xs text-gray-600 mb-2">
-                            {booking.studentClass}-{booking.studentSection}
+                            Grade {booking.studentClass}-{booking.studentSection}
                           </div>
                           {/* Always show buttons - teachers can update status anytime */}
                           <div className="flex flex-col gap-1 mb-2">
                             <button
-                              onClick={() => updateBookingStatus(key, 'done')}
+                              onClick={() => updateBookingStatus(bookingKey, 'done')}
                               className={`text-white text-xs px-2 py-1 rounded ${
                                 booking.status === 'done' 
                                   ? 'bg-green-700 font-bold' 
@@ -1267,7 +1281,7 @@ const PTMScheduler = () => {
                               ✓ Done
                             </button>
                             <button
-                              onClick={() => updateBookingStatus(key, 'not_met')}
+                              onClick={() => updateBookingStatus(bookingKey, 'not_met')}
                               className={`text-white text-xs px-2 py-1 rounded ${
                                 booking.status === 'not_met' 
                                   ? 'bg-orange-700 font-bold' 
@@ -1277,7 +1291,7 @@ const PTMScheduler = () => {
                               ✗ Not Met
                             </button>
                             <button
-                              onClick={() => updateBookingStatus(key, 'met_later')}
+                              onClick={() => updateBookingStatus(bookingKey, 'met_later')}
                               className={`text-white text-xs px-2 py-1 rounded ${
                                 booking.status === 'met_later' 
                                   ? 'bg-yellow-700 font-bold' 

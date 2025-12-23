@@ -297,11 +297,14 @@ const PTMScheduler = () => {
       return;
     }
 
+    // Search with flexible matching to handle both old and new data formats
+    // Old format: student_class = "XII-D", student_section = "D"
+    // New format: student_class = "XII", student_section = "D"
     const { data, error } = await supabase
       .from('bookings')
       .select('*')
       .ilike('student_name', trackingStudentName.trim())
-      .ilike('student_class', trackingStudentClass.trim())
+      .or(`student_class.ilike.${trackingStudentClass.trim()},student_class.ilike.${trackingStudentClass.trim()}-${trackingStudentSection.trim()}`)
       .ilike('student_section', trackingStudentSection.trim())
       .order('phase', { ascending: true })
       .order('slot_number', { ascending: true });
@@ -724,6 +727,95 @@ const PTMScheduler = () => {
     } catch (error) {
       console.error('Cleanup error:', error);
       alert('❌ Error during cleanup: ' + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const normalizeOldData = async () => {
+    if (!window.confirm('This will fix old bookings where student_class contains both grade and section.\n\nExample: "XII-D" will be split into:\n- student_class: "XII"\n- student_section: "D"\n\nThis is safe and recommended. Continue?')) {
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      // Fetch ALL bookings
+      const { data: allBookings, error: fetchError } = await supabase
+        .from('bookings')
+        .select('*');
+
+      if (fetchError) throw fetchError;
+
+      console.log(`Total bookings to check: ${allBookings.length}`);
+
+      const toUpdate = [];
+
+      for (const booking of allBookings) {
+        // Check if student_class contains a hyphen (e.g., "XII-D")
+        if (booking.student_class && booking.student_class.includes('-')) {
+          const parts = booking.student_class.split('-');
+          const grade = parts[0]; // "XII"
+          const section = parts[1]; // "D"
+          
+          toUpdate.push({
+            id: booking.id,
+            old: booking.student_class,
+            newClass: grade,
+            newSection: section || booking.student_section // Use existing section if split fails
+          });
+        }
+      }
+
+      console.log(`Found ${toUpdate.length} bookings to normalize`);
+
+      if (toUpdate.length === 0) {
+        alert('✅ No old format bookings found! Database is already normalized.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Show summary
+      const summary = toUpdate.slice(0, 10).map(b => 
+        `"${b.old}" → class: "${b.newClass}", section: "${b.newSection}"`
+      ).join('\n');
+      
+      const showMore = toUpdate.length > 10 ? `\n... and ${toUpdate.length - 10} more` : '';
+      
+      if (!window.confirm(`Found ${toUpdate.length} bookings to fix:\n\n${summary}${showMore}\n\nNormalize these bookings?`)) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Update each booking
+      let updated = 0;
+      let errors = 0;
+
+      for (const item of toUpdate) {
+        const { error } = await supabase
+          .from('bookings')
+          .update({
+            student_class: item.newClass,
+            student_section: item.newSection
+          })
+          .eq('id', item.id);
+
+        if (error) {
+          console.error(`Error updating booking ${item.id}:`, error);
+          errors++;
+        } else {
+          updated++;
+        }
+      }
+
+      alert(`✅ Normalization complete!\n\nUpdated: ${updated}\nErrors: ${errors}\n\nDatabase is now normalized.`);
+      
+      // Reload data
+      await loadBookings();
+
+    } catch (error) {
+      console.error('Normalization error:', error);
+      alert('❌ Error during normalization: ' + error.message);
     } finally {
       setIsLoading(false);
     }
@@ -1601,6 +1693,12 @@ const PTMScheduler = () => {
                   className="flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-orange-700"
                 >
                   🧹 Fix Conflicts
+                </button>
+                <button
+                  onClick={normalizeOldData}
+                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700"
+                >
+                  🔧 Normalize Data
                 </button>
                 <button
                   onClick={clearAllBookings}

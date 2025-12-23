@@ -391,9 +391,9 @@ const PTMScheduler = () => {
       const { data, error } = await supabase
         .from('bookings')
         .select('phase, slot_number')
-        .ilike('student_name', studentName.trim())
-        .ilike('student_class', studentClass.trim())
-        .ilike('student_section', studentSection.trim());
+        .eq('student_name', studentName.trim())
+        .eq('student_class', studentClass.trim())
+        .eq('student_section', studentSection.trim());
       
       if (!error && data) {
         existingStudentBookings = data.map(b => ({ phase: b.phase, slot: b.slot_number }));
@@ -463,12 +463,13 @@ const PTMScheduler = () => {
     }
 
     // CRITICAL: Fetch ALL existing bookings for this student from database
+    // Use EQ for EXACT match, not ILIKE (which does partial matching)
     const { data: existingBookings, error: fetchError } = await supabase
       .from('bookings')
       .select('*')
-      .ilike('student_name', studentName.trim())
-      .ilike('student_class', studentClass.trim())
-      .ilike('student_section', studentSection.trim());
+      .eq('student_name', studentName.trim())
+      .eq('student_class', studentClass.trim())
+      .eq('student_section', studentSection.trim());
 
     if (fetchError) {
       alert('Error checking existing bookings: ' + fetchError.message);

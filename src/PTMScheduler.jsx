@@ -298,24 +298,40 @@ const PTMScheduler = () => {
     }
 
     // Search with flexible matching to handle both old and new data formats
-    // Old format: student_class = "XII-D", student_section = "D"
-    // New format: student_class = "XII", student_section = "D"
-    const { data, error } = await supabase
+    // Try BOTH formats and combine results
+    
+    // Format 1: New format (student_class = "XII", student_section = "D")
+    const { data: data1, error: error1 } = await supabase
       .from('bookings')
       .select('*')
       .ilike('student_name', trackingStudentName.trim())
-      .or(`student_class.ilike.${trackingStudentClass.trim()},student_class.ilike.${trackingStudentClass.trim()}-${trackingStudentSection.trim()}`)
-      .ilike('student_section', trackingStudentSection.trim())
-      .order('phase', { ascending: true })
-      .order('slot_number', { ascending: true });
+      .ilike('student_class', trackingStudentClass.trim())
+      .ilike('student_section', trackingStudentSection.trim());
 
-    if (error) {
-      console.error('Error fetching bookings:', error);
+    // Format 2: Old format (student_class = "XII-D")
+    const { data: data2, error: error2 } = await supabase
+      .from('bookings')
+      .select('*')
+      .ilike('student_name', trackingStudentName.trim())
+      .ilike('student_class', `${trackingStudentClass.trim()}-${trackingStudentSection.trim()}`);
+
+    // Combine results and remove duplicates
+    const allData = [...(data1 || []), ...(data2 || [])];
+    const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
+    
+    // Sort by phase and slot
+    const data = uniqueData.sort((a, b) => {
+      if (a.phase !== b.phase) return a.phase.localeCompare(b.phase);
+      return a.slot_number - b.slot_number;
+    });
+
+    if ((error1 && error2) || (!data1 && !data2)) {
+      console.error('Error fetching bookings:', error1 || error2);
       alert('Error loading appointments. Please try again.');
       return;
     }
 
-    if (!data || data.length === 0) {
+    if (data.length === 0) {
       alert('No appointments found for this student. Please check the name, class, and section.');
       return;
     }

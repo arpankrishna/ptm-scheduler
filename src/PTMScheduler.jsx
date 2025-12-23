@@ -544,6 +544,124 @@ const PTMScheduler = () => {
     }
   };
 
+  const cleanupConflictingBookings = async () => {
+    if (!window.confirm('This will scan for and remove conflicting bookings:\n\n1. Same student with same slot for different teachers\n2. Same student with same teacher multiple times\n3. Same student with consecutive slots\n\nThe FIRST booking will be kept, duplicates will be deleted.\n\nContinue?')) {
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      // Fetch ALL bookings
+      const { data: allBookings, error: fetchError } = await supabase
+        .from('bookings')
+        .select('*')
+        .order('created_at', { ascending: true }); // Keep oldest first
+
+      if (fetchError) throw fetchError;
+
+      console.log(`Total bookings: ${allBookings.length}`);
+
+      const toDelete = [];
+      const studentBookings = {}; // Track what each student has booked
+
+      for (const booking of allBookings) {
+        const studentKey = `${booking.student_name}-${booking.student_class}-${booking.student_section}`.toLowerCase();
+        
+        if (!studentBookings[studentKey]) {
+          studentBookings[studentKey] = {
+            slots: new Set(), // Track booked slots per phase
+            teachers: new Set(), // Track booked teachers
+            bookings: []
+          };
+        }
+
+        const student = studentBookings[studentKey];
+        const slotKey = `${booking.phase}-${booking.slot_number}`;
+        
+        let shouldDelete = false;
+        let reason = '';
+
+        // Check 1: Same slot already booked in this phase?
+        if (student.slots.has(slotKey)) {
+          shouldDelete = true;
+          reason = 'Duplicate slot';
+        }
+
+        // Check 2: Same teacher already booked?
+        if (student.teachers.has(booking.teacher)) {
+          shouldDelete = true;
+          reason = 'Duplicate teacher';
+        }
+
+        // Check 3: Consecutive slot violation?
+        const slotNum = booking.slot_number;
+        const prevSlotKey = `${booking.phase}-${slotNum - 1}`;
+        const nextSlotKey = `${booking.phase}-${slotNum + 1}`;
+        if (student.slots.has(prevSlotKey) || student.slots.has(nextSlotKey)) {
+          shouldDelete = true;
+          reason = 'Consecutive slot';
+        }
+
+        if (shouldDelete) {
+          toDelete.push({
+            id: booking.id,
+            student: booking.student_name,
+            teacher: booking.teacher,
+            phase: booking.phase,
+            slot: booking.slot_number,
+            reason
+          });
+        } else {
+          // Keep this booking - track it
+          student.slots.add(slotKey);
+          student.teachers.add(booking.teacher);
+          student.bookings.push(booking);
+        }
+      }
+
+      console.log(`Found ${toDelete.length} conflicting bookings to delete`);
+
+      if (toDelete.length === 0) {
+        alert('✅ No conflicting bookings found! Database is clean.');
+        setIsLoading(false);
+        return;
+      }
+
+      // Show summary
+      const summary = toDelete.slice(0, 10).map(b => 
+        `${b.student} - ${b.teacher} - ${b.phase} Slot ${b.slot} (${b.reason})`
+      ).join('\n');
+      
+      const showMore = toDelete.length > 10 ? `\n... and ${toDelete.length - 10} more` : '';
+      
+      if (!window.confirm(`Found ${toDelete.length} conflicts:\n\n${summary}${showMore}\n\nDelete these bookings?`)) {
+        setIsLoading(false);
+        return;
+      }
+
+      // Delete conflicts
+      const deleteIds = toDelete.map(b => b.id);
+      const { error: deleteError } = await supabase
+        .from('bookings')
+        .delete()
+        .in('id', deleteIds);
+
+      if (deleteError) throw deleteError;
+
+      alert(`✅ Successfully deleted ${toDelete.length} conflicting bookings!\n\nDatabase is now clean.`);
+      
+      // Reload data
+      await loadBookings();
+
+    } catch (error) {
+      console.error('Cleanup error:', error);
+      alert('❌ Error during cleanup: ' + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // Teacher upload functions
   const handleExcelUpload = (event) => {
     const file = event.target.files[0];
@@ -1410,6 +1528,12 @@ const PTMScheduler = () => {
                 >
                   <Download size={18} />
                   Export
+                </button>
+                <button
+                  onClick={cleanupConflictingBookings}
+                  className="flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-orange-700"
+                >
+                  🧹 Fix Conflicts
                 </button>
                 <button
                   onClick={clearAllBookings}

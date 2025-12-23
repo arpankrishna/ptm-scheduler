@@ -339,23 +339,60 @@ const PTMScheduler = () => {
     return `${grade}-${teacher}-${phase}-${slot}`;
   };
 
-  const getAvailableSlotsForTeacher = (teacher, grade, phase, studentCurrentBookings = []) => {
+  const getAvailableSlotsForTeacher = async (teacher, grade, phase, studentName, studentClass, studentSection, studentCurrentBookings = []) => {
     const availableSlots = [];
     const totalSlots = phases[phase].slots;
+    
+    // Get ALL existing bookings for this student from database
+    let existingStudentBookings = [];
+    if (studentName && studentClass && studentSection) {
+      const { data, error } = await supabase
+        .from('bookings')
+        .select('phase, slot_number')
+        .ilike('student_name', studentName.trim())
+        .ilike('student_class', studentClass.trim())
+        .ilike('student_section', studentSection.trim());
+      
+      if (!error && data) {
+        existingStudentBookings = data.map(b => ({ phase: b.phase, slot: b.slot_number }));
+      }
+    }
+    
+    // Combine current session bookings with database bookings
+    const allStudentBookings = [...studentCurrentBookings, ...existingStudentBookings];
+    
+    // Get all slots already booked by student in this phase (from both sources)
+    const bookedSlotsInPhase = allStudentBookings
+      .filter(b => b.phase === phase)
+      .map(b => b.slot);
+    
+    // Get consecutive slots that should be blocked
+    const blockedConsecutiveSlots = new Set();
+    bookedSlotsInPhase.forEach(bookedSlot => {
+      // Block slot before
+      if (bookedSlot > 1) {
+        blockedConsecutiveSlots.add(bookedSlot - 1);
+      }
+      // Block slot after
+      if (bookedSlot < totalSlots) {
+        blockedConsecutiveSlots.add(bookedSlot + 1);
+      }
+    });
     
     for (let slot = 1; slot <= totalSlots; slot++) {
       // Check if teacher is busy in ANY grade at this phase/slot
       const teacherIsBusy = sheets.some(g => {
         const key = getBookingKey(g, teacher, phase, slot);
-        return bookings[key]; // If booking exists in any grade, teacher is busy
+        return bookings[key];
       });
       
-      // Check if student already has a booking at this slot in this phase
-      const studentHasSlotBooked = studentCurrentBookings.some(booking => 
-        booking.phase === phase && booking.slot === slot
-      );
+      // Check if student already has THIS EXACT slot booked
+      const studentHasSlotBooked = bookedSlotsInPhase.includes(slot);
       
-      if (!teacherIsBusy && !studentHasSlotBooked) {
+      // Check if slot is consecutive to already booked slot
+      const isConsecutiveSlot = blockedConsecutiveSlots.has(slot);
+      
+      if (!teacherIsBusy && !studentHasSlotBooked && !isConsecutiveSlot) {
         availableSlots.push(slot);
       }
     }
@@ -1143,7 +1180,9 @@ const PTMScheduler = () => {
                 getBookingKey={getBookingKey}
                 getAvailableSlotsForTeacher={getAvailableSlotsForTeacher}
                 onAddTeacher={handleAddTeacher}
+                studentName={studentName}
                 studentClass={studentClass}
+                studentSection={studentSection}
                 selectedTeachers={selectedTeachers}
               />
 
@@ -1664,14 +1703,44 @@ const PTMScheduler = () => {
 };
 
 // Parent Teacher Selector Component
-const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentClass, selectedTeachers }) => {
+const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentName, studentClass, studentSection, selectedTeachers }) => {
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [selectedPhase, setSelectedPhase] = useState('');
   const [selectedSlot, setSelectedSlot] = useState('');
+  const [availableSlots, setAvailableSlots] = useState([]);
+  const [loadingSlots, setLoadingSlots] = useState(false);
 
-  const availableSlots = studentClass && selectedTeacher && selectedPhase
-    ? getAvailableSlotsForTeacher(selectedTeacher, studentClass, selectedPhase, selectedTeachers)
-    : [];
+  // Get list of already booked teachers to prevent duplicates
+  const bookedTeachers = selectedTeachers.map(st => st.teacher);
+  
+  // Filter out already selected teachers
+  const availableTeachers = (teacherData[studentClass] || []).filter(
+    teacher => !bookedTeachers.includes(teacher)
+  );
+
+  // Fetch available slots when teacher and phase are selected
+  useEffect(() => {
+    const fetchSlots = async () => {
+      if (studentName && studentClass && studentSection && selectedTeacher && selectedPhase) {
+        setLoadingSlots(true);
+        const slots = await getAvailableSlotsForTeacher(
+          selectedTeacher, 
+          studentClass, 
+          selectedPhase, 
+          studentName,
+          studentClass,
+          studentSection,
+          selectedTeachers
+        );
+        setAvailableSlots(slots);
+        setLoadingSlots(false);
+      } else {
+        setAvailableSlots([]);
+      }
+    };
+    
+    fetchSlots();
+  }, [selectedTeacher, selectedPhase, studentName, studentClass, studentSection, selectedTeachers]);
 
   const handleAdd = () => {
     if (!studentClass) {
@@ -1690,6 +1759,7 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
     setSelectedTeacher('');
     setSelectedPhase('');
     setSelectedSlot('');
+    setAvailableSlots([]);
   };
 
   return (
@@ -1708,12 +1778,15 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
           >
             <option value="">Select Teacher</option>
-            {studentClass && teacherData[studentClass].map(teacher => (
+            {availableTeachers.map(teacher => (
               <option key={teacher} value={teacher}>{teacher}</option>
             ))}
           </select>
           {!studentClass && (
             <p className="text-xs text-red-600 mt-1">Select grade above first</p>
+          )}
+          {studentClass && availableTeachers.length === 0 && (
+            <p className="text-xs text-orange-600 mt-1">All teachers for this grade already selected</p>
           )}
         </div>
 
@@ -1739,12 +1812,16 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Slot * <span className="text-green-600 text-xs">({availableSlots.length} available)</span>
+            Slot * {loadingSlots ? (
+              <span className="text-blue-600 text-xs">(Loading...)</span>
+            ) : (
+              <span className="text-green-600 text-xs">({availableSlots.length} available)</span>
+            )}
           </label>
           <select
             value={selectedSlot}
             onChange={(e) => setSelectedSlot(e.target.value)}
-            disabled={!selectedPhase || availableSlots.length === 0}
+            disabled={!selectedPhase || availableSlots.length === 0 || loadingSlots}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
           >
             <option value="">Select Slot</option>
@@ -1754,8 +1831,8 @@ const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, g
               </option>
             ))}
           </select>
-          {selectedPhase && availableSlots.length === 0 && (
-            <p className="text-red-600 text-xs mt-1">❌ No slots available</p>
+          {selectedPhase && availableSlots.length === 0 && !loadingSlots && (
+            <p className="text-red-600 text-xs mt-1">❌ No slots available (consecutive slots or already booked)</p>
           )}
         </div>
       </div>

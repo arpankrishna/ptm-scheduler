@@ -297,27 +297,47 @@ const PTMScheduler = () => {
       return;
     }
 
-    // Search with flexible matching to handle both old and new data formats
-    // Try BOTH formats and combine results
+    // Search with VERY flexible matching - handle spaces, case, and format variations
+    const searchName = trackingStudentName.trim();
+    const searchClass = trackingStudentClass.trim();
+    const searchSection = trackingStudentSection.trim();
+    
+    console.log('Searching for:', { searchName, searchClass, searchSection });
     
     // Format 1: New format (student_class = "XII", student_section = "D")
     const { data: data1, error: error1 } = await supabase
       .from('bookings')
       .select('*')
-      .ilike('student_name', trackingStudentName.trim())
-      .ilike('student_class', trackingStudentClass.trim())
-      .ilike('student_section', trackingStudentSection.trim());
+      .ilike('student_name', `%${searchName}%`) // Use wildcard to handle spacing issues
+      .ilike('student_class', searchClass)
+      .ilike('student_section', searchSection);
+
+    console.log('Format 1 results:', data1?.length || 0, data1);
 
     // Format 2: Old format (student_class = "XII-D")
     const { data: data2, error: error2 } = await supabase
       .from('bookings')
       .select('*')
-      .ilike('student_name', trackingStudentName.trim())
-      .ilike('student_class', `${trackingStudentClass.trim()}-${trackingStudentSection.trim()}`);
+      .ilike('student_name', `%${searchName}%`)
+      .ilike('student_class', `${searchClass}-${searchSection}`);
 
-    // Combine results and remove duplicates
-    const allData = [...(data1 || []), ...(data2 || [])];
+    console.log('Format 2 results:', data2?.length || 0, data2);
+
+    // Format 3: Try with just name and section (in case class field is completely different)
+    const { data: data3, error: error3 } = await supabase
+      .from('bookings')
+      .select('*')
+      .ilike('student_name', `%${searchName}%`)
+      .ilike('student_section', searchSection);
+
+    console.log('Format 3 (name+section only) results:', data3?.length || 0, data3);
+
+    // Combine all results and remove duplicates
+    const allData = [...(data1 || []), ...(data2 || []), ...(data3 || [])];
+    console.log('Total results before dedup:', allData.length);
+    
     const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
+    console.log('Unique results:', uniqueData.length);
     
     // Sort by phase and slot
     const data = uniqueData.sort((a, b) => {
@@ -325,16 +345,19 @@ const PTMScheduler = () => {
       return a.slot_number - b.slot_number;
     });
 
-    if ((error1 && error2) || (!data1 && !data2)) {
-      console.error('Error fetching bookings:', error1 || error2);
+    if ((error1 && error2 && error3) || (!data1 && !data2 && !data3)) {
+      console.error('All queries failed:', { error1, error2, error3 });
       alert('Error loading appointments. Please try again.');
       return;
     }
 
     if (data.length === 0) {
-      alert('No appointments found for this student. Please check the name, class, and section.');
+      // Show detailed error message with what we searched for
+      alert(`No appointments found for:\n\nName: "${searchName}"\nClass: "${searchClass}"\nSection: "${searchSection}"\n\nPlease check:\n1. Name spelling (try partial name)\n2. Correct class (IX/X/XI/XII)\n3. Correct section letter`);
       return;
     }
+
+    console.log('Final results to display:', data);
 
     // Format the bookings with teacher status
     const formattedBookings = data.map(booking => ({

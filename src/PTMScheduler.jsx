@@ -503,11 +503,14 @@ const PTMScheduler = () => {
         continue;
       }
       
-      // Check 2: Duplicate teacher?
-      if (existingTeachers.add(selection.teacher).size === existingTeachers.size) {
+      // Check 2: Duplicate teacher? (check BEFORE adding)
+      if (existingTeachers.has(selection.teacher)) {
         validationErrors.push(`${selection.teacher}: Already booked this teacher`);
         continue;
       }
+      
+      // Add teacher to set for next iteration check
+      existingTeachers.add(selection.teacher);
       
       // Check 3: Consecutive slot?
       if (blockedSlots.has(slotKey)) {

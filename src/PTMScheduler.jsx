@@ -420,7 +420,74 @@ const PTMScheduler = () => {
       return;
     }
 
-    // Submit all bookings
+    // CRITICAL: Fetch ALL existing bookings for this student from database
+    const { data: existingBookings, error: fetchError } = await supabase
+      .from('bookings')
+      .select('*')
+      .ilike('student_name', studentName.trim())
+      .ilike('student_class', studentClass.trim())
+      .ilike('student_section', studentSection.trim());
+
+    if (fetchError) {
+      alert('Error checking existing bookings: ' + fetchError.message);
+      return;
+    }
+
+    // Build validation sets
+    const existingSlots = new Set(); // phase-slot combinations
+    const existingTeachers = new Set(); // teacher names
+    const blockedSlots = new Set(); // consecutive slots to block
+
+    existingBookings.forEach(booking => {
+      const slotKey = `${booking.phase}-${booking.slot_number}`;
+      existingSlots.add(slotKey);
+      existingTeachers.add(booking.teacher);
+      
+      // Block consecutive slots
+      blockedSlots.add(`${booking.phase}-${booking.slot_number - 1}`);
+      blockedSlots.add(`${booking.phase}-${booking.slot_number + 1}`);
+    });
+
+    // Validate EACH booking before submitting
+    const validationErrors = [];
+    
+    for (const selection of selectedTeachers) {
+      const slotKey = `${selection.phase}-${selection.slot}`;
+      
+      // Check 1: Duplicate slot?
+      if (existingSlots.has(slotKey)) {
+        validationErrors.push(`${selection.teacher}: Student already has a booking at ${phases[selection.phase].name} Slot ${selection.slot}`);
+        continue;
+      }
+      
+      // Check 2: Duplicate teacher?
+      if (existingTeachers.add(selection.teacher).size === existingTeachers.size) {
+        validationErrors.push(`${selection.teacher}: Already booked this teacher`);
+        continue;
+      }
+      
+      // Check 3: Consecutive slot?
+      if (blockedSlots.has(slotKey)) {
+        validationErrors.push(`${selection.teacher} at Slot ${selection.slot}: Cannot book consecutive slots`);
+        continue;
+      }
+      
+      // Also check against other selections in this submission
+      selectedTeachers.forEach(other => {
+        if (other !== selection) {
+          if (other.phase === selection.phase && Math.abs(other.slot - selection.slot) === 1) {
+            validationErrors.push(`Slots ${other.slot} and ${selection.slot} are consecutive in ${phases[selection.phase].name}`);
+          }
+        }
+      });
+    }
+
+    if (validationErrors.length > 0) {
+      alert('❌ Booking Validation Failed:\n\n' + validationErrors.join('\n') + '\n\nPlease remove conflicting selections.');
+      return;
+    }
+
+    // All validations passed - proceed with submission
     const results = [];
     const errors = [];
     

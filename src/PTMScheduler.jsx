@@ -890,6 +890,141 @@ const PTMScheduler = () => {
     }
   };
 
+  const diagnoseBookings = async () => {
+    if (!window.confirm('This will check for bookings that exist in database but don\'t show in teacher grids.\n\nContinue?')) {
+      return;
+    }
+
+    setIsLoading(true);
+    
+    try {
+      // Fetch ALL bookings
+      const { data: allBookings, error: fetchError } = await supabase
+        .from('bookings')
+        .select('*');
+
+      if (fetchError) throw fetchError;
+
+      console.log(`Total bookings in database: ${allBookings.length}`);
+
+      const issues = [];
+      const bookingsByKey = {};
+
+      allBookings.forEach(booking => {
+        // Generate what the key SHOULD be
+        const correctKey = `${booking.grade}-${booking.teacher}-${booking.phase}-${booking.slot_number}`;
+        const storedKey = booking.booking_key;
+
+        // Track all bookings by correct key
+        if (!bookingsByKey[correctKey]) {
+          bookingsByKey[correctKey] = [];
+        }
+        bookingsByKey[correctKey].push(booking);
+
+        // Check for issues
+        if (storedKey !== correctKey) {
+          issues.push({
+            type: 'KEY_MISMATCH',
+            student: booking.student_name,
+            teacher: booking.teacher,
+            grade: booking.grade,
+            phase: booking.phase,
+            slot: booking.slot_number,
+            storedKey: storedKey,
+            correctKey: correctKey,
+            id: booking.id
+          });
+        }
+
+        // Check for duplicate keys
+        if (bookingsByKey[correctKey].length > 1) {
+          issues.push({
+            type: 'DUPLICATE_KEY',
+            student: booking.student_name,
+            teacher: booking.teacher,
+            grade: booking.grade,
+            phase: booking.phase,
+            slot: booking.slot_number,
+            key: correctKey,
+            count: bookingsByKey[correctKey].length
+          });
+        }
+      });
+
+      // Group issues by type
+      const keyMismatches = issues.filter(i => i.type === 'KEY_MISMATCH');
+      const duplicates = issues.filter(i => i.type === 'DUPLICATE_KEY');
+
+      console.log('Diagnosis Results:', {
+        totalBookings: allBookings.length,
+        keyMismatches: keyMismatches.length,
+        duplicates: duplicates.length
+      });
+
+      // Show results
+      let message = `📊 DIAGNOSIS RESULTS\n\n`;
+      message += `Total Bookings: ${allBookings.length}\n`;
+      message += `Key Mismatches: ${keyMismatches.length}\n`;
+      message += `Duplicates: ${duplicates.length}\n\n`;
+
+      if (keyMismatches.length > 0) {
+        message += `❌ KEY MISMATCHES (bookings won't show in teacher grid):\n\n`;
+        keyMismatches.slice(0, 10).forEach(issue => {
+          message += `${issue.student} → ${issue.teacher}\n`;
+          message += `  Stored: ${issue.storedKey}\n`;
+          message += `  Correct: ${issue.correctKey}\n\n`;
+        });
+        if (keyMismatches.length > 10) {
+          message += `... and ${keyMismatches.length - 10} more\n\n`;
+        }
+      }
+
+      if (duplicates.length > 0) {
+        message += `⚠️ DUPLICATES:\n`;
+        duplicates.slice(0, 5).forEach(issue => {
+          message += `${issue.student} → ${issue.teacher} (${issue.count} copies)\n`;
+        });
+      }
+
+      alert(message);
+
+      // Ask to fix
+      if (keyMismatches.length > 0) {
+        if (window.confirm(`Found ${keyMismatches.length} bookings with wrong keys.\n\nFix them now?`)) {
+          await fixBookingKeys(keyMismatches);
+        }
+      }
+
+    } catch (error) {
+      console.error('Diagnosis error:', error);
+      alert('❌ Error during diagnosis: ' + error.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fixBookingKeys = async (issues) => {
+    let fixed = 0;
+    let errors = 0;
+
+    for (const issue of issues) {
+      const { error } = await supabase
+        .from('bookings')
+        .update({ booking_key: issue.correctKey })
+        .eq('id', issue.id);
+
+      if (error) {
+        console.error(`Error fixing booking ${issue.id}:`, error);
+        errors++;
+      } else {
+        fixed++;
+      }
+    }
+
+    alert(`✅ Fixed ${fixed} booking keys!\nErrors: ${errors}\n\nRefresh to see changes.`);
+    await loadBookings();
+  };
+
   // Teacher upload functions
   const handleExcelUpload = (event) => {
     const file = event.target.files[0];
@@ -1768,6 +1903,12 @@ const PTMScheduler = () => {
                   className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700"
                 >
                   🔧 Normalize Data
+                </button>
+                <button
+                  onClick={diagnoseBookings}
+                  className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700"
+                >
+                  🔍 Diagnose Bookings
                 </button>
                 <button
                   onClick={clearAllBookings}

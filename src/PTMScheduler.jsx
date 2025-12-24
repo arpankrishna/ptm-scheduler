@@ -213,8 +213,29 @@ const PTMScheduler = () => {
     }
 
     const bookingsMap = {};
+    const keyMismatches = [];
+    
     data.forEach(booking => {
-      bookingsMap[booking.booking_key] = {
+      // Regenerate the key to ensure consistency
+      const correctKey = getBookingKey(booking.grade, booking.teacher, booking.phase, booking.slot_number);
+      
+      // Check if stored key matches correct key
+      if (booking.booking_key !== correctKey) {
+        keyMismatches.push({
+          id: booking.id,
+          student: booking.student_name,
+          teacher: booking.teacher,
+          storedKey: booking.booking_key,
+          correctKey: correctKey
+        });
+        console.warn(`Booking key mismatch for ${booking.student_name}:`, {
+          stored: booking.booking_key,
+          correct: correctKey
+        });
+      }
+      
+      // Use CORRECT key (regenerated) instead of trusting stored key
+      bookingsMap[correctKey] = {
         studentName: booking.student_name,
         studentClass: booking.student_class,
         studentSection: booking.student_section,
@@ -222,9 +243,14 @@ const PTMScheduler = () => {
         teacher: booking.teacher,
         phase: booking.phase,
         slot: booking.slot_number,
-        status: booking.status || 'pending'
+        status: booking.status || 'pending',
+        id: booking.id // Store ID for updates
       };
     });
+
+    if (keyMismatches.length > 0) {
+      console.error(`Found ${keyMismatches.length} bookings with incorrect keys:`, keyMismatches);
+    }
 
     setBookings(bookingsMap);
     setIsLoading(false);

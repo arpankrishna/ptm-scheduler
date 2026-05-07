@@ -1,49 +1,55 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Download, CheckCircle, Coffee, Play, Pause, Calendar, User, Lock, Upload } from 'lucide-react';
+import { Download, CheckCircle, Coffee, Play, Pause, Calendar, User, Lock, Upload, LogOut, Key } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
+import * as XLSX from 'xlsx';
 
-// Initialize Supabase client
+// Initialize Supabase client (anon - for normal operations)
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
-const PTMScheduler = () => {
-  // Teacher data by grade - loaded from database only
-  const [teacherData, setTeacherData] = useState({
-    'IX': [],
-    'X': [],
-    'XI': [],
-    'XII': []
-  });
+// Service role client - only used for admin: creating auth users
+const supabaseServiceKey = import.meta.env.VITE_SUPABASE_SERVICE_KEY || '';
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { autoRefreshToken: false, persistSession: false }
+});
 
-  // Phase definitions with exact timings and roll number ranges
+// ─── Constants ────────────────────────────────────────────────────────────────
+const GRADES = ['VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+const SECTIONS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const adminPassword = 'SBS-admin_2025';
+const TEACHERS_PER_PAGE = 10;
+
+const PTMScheduler = () => {
+  // Teacher data by grade - loaded from database
+  const [teacherData, setTeacherData] = useState(
+    Object.fromEntries(GRADES.map(g => [g, []]))
+  );
+
+  // Phase definitions
   const phases = {
     phase1: {
       name: 'Phase 1',
       time: '8:15 AM - 9:40 AM',
       rollNumbers: 'Roll Numbers: 21-30',
       slots: 18,
-      timings: ['8:15', '8:20', '8:25', '8:30', '8:35', '8:40', '8:45', '8:50', '8:55', '9:00', '9:05', '9:10', '9:15', '9:20', '9:25', '9:30', '9:35', '9:40']
+      timings: ['8:15','8:20','8:25','8:30','8:35','8:40','8:45','8:50','8:55','9:00','9:05','9:10','9:15','9:20','9:25','9:30','9:35','9:40']
     },
     phase2: {
       name: 'Phase 2',
       time: '9:55 AM - 11:20 AM',
       rollNumbers: 'Roll Numbers: 1-10',
       slots: 18,
-      timings: ['9:55', '10:00', '10:05', '10:10', '10:15', '10:20', '10:25', '10:30', '10:35', '10:40', '10:45', '10:50', '10:55', '11:00', '11:05', '11:10', '11:15', '11:20']
+      timings: ['9:55','10:00','10:05','10:10','10:15','10:20','10:25','10:30','10:35','10:40','10:45','10:50','10:55','11:00','11:05','11:10','11:15','11:20']
     },
     phase3: {
       name: 'Phase 3',
       time: '11:35 AM - 1:00 PM',
       rollNumbers: 'Roll Numbers: 11-20',
       slots: 18,
-      timings: ['11:35', '11:40', '11:45', '11:50', '11:55', '12:00', '12:05', '12:10', '12:15', '12:20', '12:25', '12:30', '12:35', '12:40', '12:45', '12:50', '12:55', '13:00']
+      timings: ['11:35','11:40','11:45','11:50','11:55','12:00','12:05','12:10','12:15','12:20','12:25','12:30','12:35','12:40','12:45','12:50','12:55','13:00']
     }
   };
-
-  const sheets = ['IX', 'X', 'XI', 'XII'];
-  const sections = ['A', 'B', 'C', 'D', 'E', 'F'];
-  const adminPassword = 'SBS-admin_2025';
 
   // All unique teachers
   const allTeachers = useMemo(() => {
@@ -52,189 +58,228 @@ const PTMScheduler = () => {
       teachers.forEach(teacher => teacherSet.add(teacher));
     });
     return Array.from(teacherSet).sort();
-  }, [teacherData]); // Recompute when teacherData changes!
+  }, [teacherData]);
 
-  // State
-  const [userRole, setUserRole] = useState(null); // null, 'teacher', 'admin'
+  // ── Auth state ──
+  const [authUser, setAuthUser] = useState(null);       // Supabase auth user
+  const [userRole, setUserRole] = useState(null);        // 'teacher' | 'admin' | null
   const [loggedInTeacher, setLoggedInTeacher] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
   const [showLogin, setShowLogin] = useState(false);
-  const [loginType, setLoginType] = useState('teacher');
-  
+  const [loginType, setLoginType] = useState('teacher'); // 'teacher' | 'admin'
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [adminPwInput, setAdminPwInput] = useState('');
+  const [loginError, setLoginError] = useState('');
+  const [loginLoading, setLoginLoading] = useState(false);
+
+  // Change password modal
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changePwError, setChangePwError] = useState('');
+  const [changePwSuccess, setChangePwSuccess] = useState('');
+
+  // ── Data state ──
   const [bookings, setBookings] = useState({});
   const [teacherStatus, setTeacherStatus] = useState({});
   const [isLoading, setIsLoading] = useState(true);
-  
+
+  // ── Admin/display state ──
   const [activeSheet, setActiveSheet] = useState('IX');
   const [activePhase, setActivePhase] = useState('phase1');
   const [slideshowMode, setSlideshowMode] = useState(false);
   const [currentSlideGrade, setCurrentSlideGrade] = useState(0);
-  const [currentSlidePage, setCurrentSlidePage] = useState(0); // For teacher pagination
-  const [showTeacherUpload, setShowTeacherUpload] = useState(false); // Teacher upload modal
-  const [uploadedTeachers, setUploadedTeachers] = useState(null); // Preview uploaded data
-  
-  const TEACHERS_PER_PAGE = 10; // Show 10 teachers per screen
-  
-  // Parent booking form state
+  const [currentSlidePage, setCurrentSlidePage] = useState(0);
+  const [showTeacherUpload, setShowTeacherUpload] = useState(false);
+  const [uploadedTeachers, setUploadedTeachers] = useState(null);
+
+  // ── Teacher accounts upload state ──
+  const [showTeacherAccounts, setShowTeacherAccounts] = useState(false);
+  const [uploadedTeacherAccounts, setUploadedTeacherAccounts] = useState(null); // parsed from excel
+  const [teacherAccountsLoading, setTeacherAccountsLoading] = useState(false);
+  const [teacherAccountsResults, setTeacherAccountsResults] = useState(null); // after save
+
+  // ── Student upload state ──
+  const [showStudentUpload, setShowStudentUpload] = useState(false);
+  const [studentUploadGrade, setStudentUploadGrade] = useState('');
+  const [studentUploadSection, setStudentUploadSection] = useState('');
+  const [uploadedStudents, setUploadedStudents] = useState(null);
+  const [studentUploadLoading, setStudentUploadLoading] = useState(false);
+
+  // ── Parent booking state ──
   const [studentName, setStudentName] = useState('');
   const [studentClass, setStudentClass] = useState('');
   const [studentSection, setStudentSection] = useState('');
-  const [selectedTeachers, setSelectedTeachers] = useState([]); // Array of { teacher, grade, phase, slot }
+  const [studentsList, setStudentsList] = useState([]); // from DB for dropdown
+  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [selectedTeachers, setSelectedTeachers] = useState([]);
   const [showConfirmation, setShowConfirmation] = useState(false);
   const [confirmations, setConfirmations] = useState([]);
-  
-  // Parent tracking view state
+
+  // ── Tracking state ──
   const [showTrackingView, setShowTrackingView] = useState(false);
   const [trackingStudentName, setTrackingStudentName] = useState('');
   const [trackingStudentClass, setTrackingStudentClass] = useState('');
   const [trackingStudentSection, setTrackingStudentSection] = useState('');
+  const [trackingStudentsList, setTrackingStudentsList] = useState([]);
+  const [trackingStudentsLoading, setTrackingStudentsLoading] = useState(false);
   const [trackedBookings, setTrackedBookings] = useState([]);
-  
-  // PTM Date configuration
-  const [ptmDate, setPtmDate] = useState('December 24, 2025'); // Default date
+
+  // ── PTM config ──
+  const [ptmDate, setPtmDate] = useState('PTM Day');
   const [showDateEditor, setShowDateEditor] = useState(false);
 
-  // Load data
+  // ─── On mount: check existing session ─────────────────────────────────────
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        setAuthUser(session.user);
+        resolveTeacherFromAuth(session.user);
+      }
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        setAuthUser(session.user);
+        resolveTeacherFromAuth(session.user);
+      } else {
+        setAuthUser(null);
+        setUserRole(null);
+        setLoggedInTeacher('');
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const resolveTeacherFromAuth = async (user) => {
+    // Look up teacher by auth_email
+    const { data, error } = await supabase
+      .from('teachers')
+      .select('teacher_name, is_admin')
+      .eq('auth_email', user.email)
+      .single();
+
+    if (data) {
+      setLoggedInTeacher(data.teacher_name);
+      setUserRole(data.is_admin ? 'admin' : 'teacher');
+    } else {
+      // email not linked to any teacher — treat as unlinked (logout)
+      await supabase.auth.signOut();
+    }
+  };
+
+  // ─── Load data on mount ───────────────────────────────────────────────────
   useEffect(() => {
     loadBookings();
     loadTeacherStatus();
     loadTeachersFromDatabase();
+    loadPtmConfig();
   }, []);
+
+  // ─── Real-time subscriptions ──────────────────────────────────────────────
+  useEffect(() => {
+    const bookingsSub = supabase
+      .channel('bookings_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'bookings' }, () => loadBookings())
+      .subscribe();
+
+    const statusSub = supabase
+      .channel('teacher_status_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'teacher_status' }, () => loadTeacherStatus())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(bookingsSub);
+      supabase.removeChannel(statusSub);
+    };
+  }, []);
+
+  // ─── Slideshow ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (slideshowMode && userRole === 'admin') {
+      const interval = setInterval(() => {
+        const currentGradeTeachers = teacherData[GRADES[currentSlideGrade]] || [];
+        const totalPages = Math.ceil(currentGradeTeachers.length / TEACHERS_PER_PAGE);
+        if (totalPages > 1 && currentSlidePage < totalPages - 1) {
+          setCurrentSlidePage(prev => prev + 1);
+        } else {
+          setCurrentSlidePage(0);
+          setCurrentSlideGrade(prev => (prev + 1) % GRADES.length);
+        }
+      }, 6000);
+      return () => clearInterval(interval);
+    }
+  }, [slideshowMode, userRole, currentSlideGrade, currentSlidePage, teacherData]);
+
+  useEffect(() => {
+    if (slideshowMode) setActiveSheet(GRADES[currentSlideGrade]);
+  }, [currentSlideGrade, slideshowMode]);
+
+  // ─── Load students when grade+section changes (parent booking) ────────────
+  useEffect(() => {
+    if (studentClass && studentSection) {
+      loadStudentsForDropdown(studentClass, studentSection, setStudentsList, setStudentsLoading);
+      setStudentName(''); // reset name when grade/section changes
+    } else {
+      setStudentsList([]);
+    }
+  }, [studentClass, studentSection]);
+
+  // ─── Load students for tracking dropdown ─────────────────────────────────
+  useEffect(() => {
+    if (trackingStudentClass && trackingStudentSection) {
+      loadStudentsForDropdown(trackingStudentClass, trackingStudentSection, setTrackingStudentsList, setTrackingStudentsLoading);
+      setTrackingStudentName('');
+    } else {
+      setTrackingStudentsList([]);
+    }
+  }, [trackingStudentClass, trackingStudentSection]);
+
+  // ─── Data loaders ─────────────────────────────────────────────────────────
+  const loadStudentsForDropdown = async (grade, section, setList, setLoading) => {
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('students')
+      .select('name, sid, serial_number')
+      .eq('grade', grade)
+      .eq('section', section)
+      .order('serial_number', { ascending: true });
+
+    if (!error && data) {
+      setList(data);
+    } else {
+      setList([]);
+    }
+    setLoading(false);
+  };
 
   const loadTeachersFromDatabase = async () => {
     try {
-      const { data, error } = await supabase
-        .from('teachers')
-        .select('*')
-        .order('teacher_name');
-
-      if (error) {
-        console.error('Error loading teachers from database:', error);
-        console.log('Using default hardcoded teacher list');
-        setIsLoading(false);
-        return;
-      }
-
+      const { data, error } = await supabase.from('teachers').select('*').order('teacher_name');
+      if (error) { setIsLoading(false); return; }
       if (data && data.length > 0) {
-        // Group teachers by grade
-        const grouped = {
-          'IX': [],
-          'X': [],
-          'XI': [],
-          'XII': []
-        };
-
-        data.forEach(teacher => {
-          if (grouped[teacher.grade]) {
-            grouped[teacher.grade].push(teacher.teacher_name);
-          }
+        const grouped = Object.fromEntries(GRADES.map(g => [g, []]));
+        data.forEach(t => {
+          if (grouped[t.grade]) grouped[t.grade].push(t.teacher_name);
         });
-
-        // Sort each grade's teachers alphabetically
-        Object.keys(grouped).forEach(grade => {
-          grouped[grade].sort();
-        });
-
-        console.log('Loaded teachers from database:', grouped);
+        Object.keys(grouped).forEach(g => grouped[g].sort());
         setTeacherData(grouped);
-      } else {
-        console.log('No teachers in database, using defaults');
       }
-    } catch (error) {
-      console.error('Exception loading teachers:', error);
+    } catch (e) {
+      console.error('Exception loading teachers:', e);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Real-time subscriptions
-  useEffect(() => {
-    const bookingsSubscription = supabase
-      .channel('bookings_changes')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'bookings' }, 
-        () => loadBookings()
-      )
-      .subscribe();
-
-    const statusSubscription = supabase
-      .channel('teacher_status_changes')
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'teacher_status' },
-        () => loadTeacherStatus()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(bookingsSubscription);
-      supabase.removeChannel(statusSubscription);
-    };
-  }, []);
-
-  // Slideshow auto-advance with pagination
-  useEffect(() => {
-    if (slideshowMode && userRole === 'admin') {
-      const interval = setInterval(() => {
-        const currentGradeTeachers = teacherData[sheets[currentSlideGrade]] || [];
-        const totalPages = Math.ceil(currentGradeTeachers.length / TEACHERS_PER_PAGE);
-        
-        // If there are multiple pages, rotate through them first
-        if (totalPages > 1 && currentSlidePage < totalPages - 1) {
-          // Move to next page of same grade
-          setCurrentSlidePage(prev => prev + 1);
-        } else {
-          // All pages shown, move to next grade and reset page
-          setCurrentSlidePage(0);
-          setCurrentSlideGrade(prev => (prev + 1) % sheets.length);
-        }
-      }, 6000); // 6 seconds per page
-      
-      return () => clearInterval(interval);
-    }
-  }, [slideshowMode, userRole, currentSlideGrade, currentSlidePage]);
-
-  useEffect(() => {
-    if (slideshowMode) {
-      setActiveSheet(sheets[currentSlideGrade]);
-    }
-  }, [currentSlideGrade, slideshowMode]);
-
-  // Load functions
   const loadBookings = async () => {
     setIsLoading(true);
-    const { data, error } = await supabase
-      .from('bookings')
-      .select('*');
-
-    if (error) {
-      console.error('Error loading bookings:', error);
-      setIsLoading(false);
-      return;
-    }
+    const { data, error } = await supabase.from('bookings').select('*');
+    if (error) { setIsLoading(false); return; }
 
     const bookingsMap = {};
-    const keyMismatches = [];
-    
     data.forEach(booking => {
-      // Regenerate the key to ensure consistency
       const correctKey = getBookingKey(booking.grade, booking.teacher, booking.phase, booking.slot_number);
-      
-      // Check if stored key matches correct key
-      if (booking.booking_key !== correctKey) {
-        keyMismatches.push({
-          id: booking.id,
-          student: booking.student_name,
-          teacher: booking.teacher,
-          storedKey: booking.booking_key,
-          correctKey: correctKey
-        });
-        console.warn(`Booking key mismatch for ${booking.student_name}:`, {
-          stored: booking.booking_key,
-          correct: correctKey
-        });
-      }
-      
-      // Use CORRECT key (regenerated) instead of trusting stored key
       bookingsMap[correctKey] = {
         studentName: booking.student_name,
         studentClass: booking.student_class,
@@ -244,231 +289,123 @@ const PTMScheduler = () => {
         phase: booking.phase,
         slot: booking.slot_number,
         status: booking.status || 'pending',
-        id: booking.id // Store ID for updates
+        id: booking.id
       };
     });
-
-    if (keyMismatches.length > 0) {
-      console.error(`Found ${keyMismatches.length} bookings with incorrect keys:`, keyMismatches);
-    }
-
     setBookings(bookingsMap);
     setIsLoading(false);
   };
 
   const loadTeacherStatus = async () => {
-    const { data, error } = await supabase
-      .from('teacher_status')
-      .select('*');
-
-    if (error) {
-      console.error('Error loading teacher status:', error);
-      return;
-    }
-
+    const { data, error } = await supabase.from('teacher_status').select('*');
+    if (error) return;
     const statusMap = {};
-    data.forEach(status => {
-      statusMap[status.teacher_name] = {
-        isOnBreak: status.is_on_break,
-        breakStartedAt: status.break_started_at
-      };
+    data.forEach(s => {
+      statusMap[s.teacher_name] = { isOnBreak: s.is_on_break, breakStartedAt: s.break_started_at };
     });
-
     setTeacherStatus(statusMap);
   };
 
-  // Authentication
-  const handleLogin = () => {
-    if (loginType === 'admin') {
-      if (loginPassword === adminPassword) {
-        setUserRole('admin');
-        setShowLogin(false);
-        setLoginPassword('');
-      } else {
-        alert('Incorrect admin password!');
-      }
-    } else {
-      // Check if teachers have loaded
-      if (isLoading) {
-        alert('Please wait, loading teacher data...');
-        return;
-      }
-      
-      if (allTeachers.length === 0) {
-        alert('No teachers found in database. Please contact admin to upload teacher list.');
-        return;
-      }
-      
-      if (allTeachers.includes(loginPassword.toUpperCase())) {
-        setUserRole('teacher');
-        setLoggedInTeacher(loginPassword.toUpperCase());
-        setShowLogin(false);
-        setLoginPassword('');
-      } else {
-        alert('Teacher name not found! Please enter your full name as it appears in the system.');
-      }
+  const loadPtmConfig = async () => {
+    const { data } = await supabase.from('ptm_config').select('*').order('created_at', { ascending: false }).limit(1);
+    if (data && data.length > 0 && data[0].ptm_date) {
+      const d = new Date(data[0].ptm_date);
+      setPtmDate(d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }));
     }
   };
 
-  const handleLogout = () => {
+  // ─── Auth handlers ────────────────────────────────────────────────────────
+  const handleTeacherLogin = async () => {
+    if (!loginEmail || !loginPassword) {
+      setLoginError('Please enter email and password');
+      return;
+    }
+    setLoginLoading(true);
+    setLoginError('');
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
+    setLoginLoading(false);
+    if (error) {
+      setLoginError('Invalid email or password. Contact admin if you need help.');
+    } else {
+      setShowLogin(false);
+      setLoginEmail('');
+      setLoginPassword('');
+    }
+  };
+
+  const handleAdminLogin = () => {
+    if (adminPwInput === adminPassword) {
+      setUserRole('admin');
+      setShowLogin(false);
+      setAdminPwInput('');
+      setLoginError('');
+    } else {
+      setLoginError('Incorrect admin password!');
+    }
+  };
+
+  const handleLogout = async () => {
+    if (authUser) await supabase.auth.signOut();
     setUserRole(null);
     setLoggedInTeacher('');
+    setAuthUser(null);
     setSlideshowMode(false);
   };
 
-  // Parent tracking lookup
-  const handleTrackBookings = async () => {
-    if (!trackingStudentName || !trackingStudentClass || !trackingStudentSection) {
-      alert('Please enter student name, class, and section');
-      return;
+  const handleChangePassword = async () => {
+    setChangePwError('');
+    setChangePwSuccess('');
+    if (!newPassword || !confirmPassword) { setChangePwError('Please fill both fields'); return; }
+    if (newPassword !== confirmPassword) { setChangePwError('Passwords do not match'); return; }
+    if (newPassword.length < 6) { setChangePwError('Password must be at least 6 characters'); return; }
+
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      setChangePwError(error.message);
+    } else {
+      setChangePwSuccess('Password changed successfully!');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => { setShowChangePassword(false); setChangePwSuccess(''); }, 2000);
     }
-
-    // Search with VERY flexible matching - handle spaces, case, and format variations
-    const searchName = trackingStudentName.trim();
-    const searchClass = trackingStudentClass.trim();
-    const searchSection = trackingStudentSection.trim();
-    
-    console.log('Searching for:', { searchName, searchClass, searchSection });
-    
-    // Format 1: New format (student_class = "XII", student_section = "D")
-    const { data: data1, error: error1 } = await supabase
-      .from('bookings')
-      .select('*')
-      .ilike('student_name', `%${searchName}%`) // Use wildcard to handle spacing issues
-      .ilike('student_class', searchClass)
-      .ilike('student_section', searchSection);
-
-    console.log('Format 1 results:', data1?.length || 0, data1);
-
-    // Format 2: Old format (student_class = "XII-D")
-    const { data: data2, error: error2 } = await supabase
-      .from('bookings')
-      .select('*')
-      .ilike('student_name', `%${searchName}%`)
-      .ilike('student_class', `${searchClass}-${searchSection}`);
-
-    console.log('Format 2 results:', data2?.length || 0, data2);
-
-    // Format 3: Try with just name and section (in case class field is completely different)
-    const { data: data3, error: error3 } = await supabase
-      .from('bookings')
-      .select('*')
-      .ilike('student_name', `%${searchName}%`)
-      .ilike('student_section', searchSection);
-
-    console.log('Format 3 (name+section only) results:', data3?.length || 0, data3);
-
-    // Combine all results and remove duplicates
-    const allData = [...(data1 || []), ...(data2 || []), ...(data3 || [])];
-    console.log('Total results before dedup:', allData.length);
-    
-    const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values());
-    console.log('Unique results:', uniqueData.length);
-    
-    // Sort by phase and slot
-    const data = uniqueData.sort((a, b) => {
-      if (a.phase !== b.phase) return a.phase.localeCompare(b.phase);
-      return a.slot_number - b.slot_number;
-    });
-
-    if ((error1 && error2 && error3) || (!data1 && !data2 && !data3)) {
-      console.error('All queries failed:', { error1, error2, error3 });
-      alert('Error loading appointments. Please try again.');
-      return;
-    }
-
-    if (data.length === 0) {
-      // Show detailed error message with what we searched for
-      alert(`No appointments found for:\n\nName: "${searchName}"\nClass: "${searchClass}"\nSection: "${searchSection}"\n\nPlease check:\n1. Name spelling (try partial name)\n2. Correct class (IX/X/XI/XII)\n3. Correct section letter`);
-      return;
-    }
-
-    console.log('Final results to display:', data);
-
-    // Format the bookings with teacher status
-    const formattedBookings = data.map(booking => ({
-      id: booking.id,
-      teacher: booking.teacher,
-      grade: booking.grade,
-      phase: booking.phase,
-      slot: booking.slot_number,
-      timing: phases[booking.phase].timings[booking.slot_number - 1],
-      phaseName: phases[booking.phase].name,
-      status: booking.status,
-      teacherStatus: teacherStatus[booking.teacher]?.isOnBreak ? 'break' : 'ready'
-    }));
-
-    setTrackedBookings(formattedBookings);
-    setShowTrackingView(true);
   };
 
-  // Booking functions
-  const getBookingKey = (grade, teacher, phase, slot) => {
-    return `${grade}-${teacher}-${phase}-${slot}`;
-  };
+  // ─── Booking helpers ──────────────────────────────────────────────────────
+  const getBookingKey = (grade, teacher, phase, slot) => `${grade}-${teacher}-${phase}-${slot}`;
 
-  const getAvailableSlotsForTeacher = async (teacher, grade, phase, studentName, studentClass, studentSection, studentCurrentBookings = []) => {
+  const getAvailableSlotsForTeacher = async (teacher, grade, phase, sName, sClass, sSection, currentBookings = []) => {
     const availableSlots = [];
     const totalSlots = phases[phase].slots;
-    
-    // Get ALL existing bookings for this student from database
+
     let existingStudentBookings = [];
-    if (studentName && studentClass && studentSection) {
+    if (sName && sClass && sSection) {
       const { data, error } = await supabase
         .from('bookings')
         .select('phase, slot_number')
-        .eq('student_name', studentName.trim())
-        .eq('student_class', studentClass.trim())
-        .eq('student_section', studentSection.trim());
-      
-      if (!error && data) {
-        existingStudentBookings = data.map(b => ({ phase: b.phase, slot: b.slot_number }));
-      }
+        .eq('student_name', sName.trim())
+        .eq('student_class', sClass.trim())
+        .eq('student_section', sSection.trim());
+      if (!error && data) existingStudentBookings = data.map(b => ({ phase: b.phase, slot: b.slot_number }));
     }
-    
-    // Combine current session bookings with database bookings
-    const allStudentBookings = [...studentCurrentBookings, ...existingStudentBookings];
-    
-    // Get all slots already booked by student in this phase (from both sources)
-    const bookedSlotsInPhase = allStudentBookings
-      .filter(b => b.phase === phase)
-      .map(b => b.slot);
-    
-    // Get consecutive slots that should be blocked
+
+    const allStudentBookings = [...currentBookings, ...existingStudentBookings];
+    const bookedSlotsInPhase = allStudentBookings.filter(b => b.phase === phase).map(b => b.slot);
+
     const blockedConsecutiveSlots = new Set();
-    bookedSlotsInPhase.forEach(bookedSlot => {
-      // Block slot before
-      if (bookedSlot > 1) {
-        blockedConsecutiveSlots.add(bookedSlot - 1);
-      }
-      // Block slot after
-      if (bookedSlot < totalSlots) {
-        blockedConsecutiveSlots.add(bookedSlot + 1);
-      }
+    bookedSlotsInPhase.forEach(s => {
+      if (s > 1) blockedConsecutiveSlots.add(s - 1);
+      if (s < totalSlots) blockedConsecutiveSlots.add(s + 1);
     });
-    
+
     for (let slot = 1; slot <= totalSlots; slot++) {
-      // Check if teacher is busy in ANY grade at this phase/slot
-      const teacherIsBusy = sheets.some(g => {
-        const key = getBookingKey(g, teacher, phase, slot);
-        return bookings[key];
-      });
-      
-      // Check if student already has THIS EXACT slot booked
-      const studentHasSlotBooked = bookedSlotsInPhase.includes(slot);
-      
-      // Check if slot is consecutive to already booked slot
-      const isConsecutiveSlot = blockedConsecutiveSlots.has(slot);
-      
-      if (!teacherIsBusy && !studentHasSlotBooked && !isConsecutiveSlot) {
+      const teacherIsBusy = GRADES.some(g => bookings[getBookingKey(g, teacher, phase, slot)]);
+      if (!teacherIsBusy && !bookedSlotsInPhase.includes(slot) && !blockedConsecutiveSlots.has(slot)) {
         availableSlots.push(slot);
       }
     }
-    
     return availableSlots;
   };
 
-  // Parent booking
   const handleAddTeacher = (teacher, grade, phase, slot) => {
     setSelectedTeachers([...selectedTeachers, { teacher, grade, phase, slot }]);
   };
@@ -479,17 +416,14 @@ const PTMScheduler = () => {
 
   const validateAndSubmit = async () => {
     if (!studentName || !studentClass || !studentSection) {
-      alert('Please enter student name, grade, and section');
+      alert('Please select grade, section, and student name');
       return;
     }
-
     if (selectedTeachers.length === 0) {
       alert('Please select at least one teacher');
       return;
     }
 
-    // CRITICAL: Fetch ALL existing bookings for this student from database
-    // Use EQ for EXACT match, not ILIKE (which does partial matching)
     const { data: existingBookings, error: fetchError } = await supabase
       .from('bookings')
       .select('*')
@@ -497,61 +431,26 @@ const PTMScheduler = () => {
       .eq('student_class', studentClass.trim())
       .eq('student_section', studentSection.trim());
 
-    if (fetchError) {
-      alert('Error checking existing bookings: ' + fetchError.message);
-      return;
-    }
+    if (fetchError) { alert('Error checking existing bookings: ' + fetchError.message); return; }
 
-    // Build validation sets
-    const existingSlots = new Set(); // phase-slot combinations
-    const existingTeachers = new Set(); // teacher names
-    const blockedSlots = new Set(); // consecutive slots to block
+    const existingSlots = new Set();
+    const existingTeachers = new Set();
+    const blockedSlots = new Set();
 
-    existingBookings.forEach(booking => {
-      const slotKey = `${booking.phase}-${booking.slot_number}`;
-      existingSlots.add(slotKey);
-      existingTeachers.add(booking.teacher);
-      
-      // Block consecutive slots
-      blockedSlots.add(`${booking.phase}-${booking.slot_number - 1}`);
-      blockedSlots.add(`${booking.phase}-${booking.slot_number + 1}`);
+    existingBookings.forEach(b => {
+      existingSlots.add(`${b.phase}-${b.slot_number}`);
+      existingTeachers.add(b.teacher);
+      blockedSlots.add(`${b.phase}-${b.slot_number - 1}`);
+      blockedSlots.add(`${b.phase}-${b.slot_number + 1}`);
     });
 
-    // Validate EACH booking before submitting
     const validationErrors = [];
-    
-    for (const selection of selectedTeachers) {
-      const slotKey = `${selection.phase}-${selection.slot}`;
-      
-      // Check 1: Duplicate slot?
-      if (existingSlots.has(slotKey)) {
-        validationErrors.push(`${selection.teacher}: Student already has a booking at ${phases[selection.phase].name} Slot ${selection.slot}`);
-        continue;
-      }
-      
-      // Check 2: Duplicate teacher? (check BEFORE adding)
-      if (existingTeachers.has(selection.teacher)) {
-        validationErrors.push(`${selection.teacher}: Already booked this teacher`);
-        continue;
-      }
-      
-      // Add teacher to set for next iteration check
-      existingTeachers.add(selection.teacher);
-      
-      // Check 3: Consecutive slot?
-      if (blockedSlots.has(slotKey)) {
-        validationErrors.push(`${selection.teacher} at Slot ${selection.slot}: Cannot book consecutive slots`);
-        continue;
-      }
-      
-      // Also check against other selections in this submission
-      selectedTeachers.forEach(other => {
-        if (other !== selection) {
-          if (other.phase === selection.phase && Math.abs(other.slot - selection.slot) === 1) {
-            validationErrors.push(`Slots ${other.slot} and ${selection.slot} are consecutive in ${phases[selection.phase].name}`);
-          }
-        }
-      });
+    for (const sel of selectedTeachers) {
+      const slotKey = `${sel.phase}-${sel.slot}`;
+      if (existingSlots.has(slotKey)) { validationErrors.push(`${sel.teacher}: Student already has a booking at ${phases[sel.phase].name} Slot ${sel.slot}`); continue; }
+      if (existingTeachers.has(sel.teacher)) { validationErrors.push(`${sel.teacher}: Already booked this teacher`); continue; }
+      existingTeachers.add(sel.teacher);
+      if (blockedSlots.has(slotKey)) { validationErrors.push(`${sel.teacher} at Slot ${sel.slot}: Cannot book consecutive slots`); continue; }
     }
 
     if (validationErrors.length > 0) {
@@ -559,618 +458,441 @@ const PTMScheduler = () => {
       return;
     }
 
-    // All validations passed - proceed with submission
     const results = [];
     const errors = [];
-    
-    for (const selection of selectedTeachers) {
-      const bookingKey = getBookingKey(selection.grade, selection.teacher, selection.phase, selection.slot);
-      
-      console.log('Submitting booking:', {
-        bookingKey,
-        studentName,
-        studentClass,
-        studentSection,
-        selection
-      });
-      
-      const { data, error } = await supabase
-        .from('bookings')
-        .insert({
-          booking_key: bookingKey,
-          student_name: studentName,
-          student_class: studentClass, // Use parent-entered grade
-          student_section: studentSection,
-          grade: selection.grade,
-          teacher: selection.teacher,
-          phase: selection.phase,
-          slot_number: selection.slot,
-          time_slot: `${phases[selection.phase].name} - Slot ${selection.slot}`,
-          status: 'pending'
-        })
-        .select();
 
-      if (error) {
-        console.error('Booking error:', error);
-        errors.push({ teacher: selection.teacher, error: error.message });
-      } else {
-        console.log('Booking success:', data);
-        results.push({
-          teacher: selection.teacher,
-          grade: selection.grade,
-          phase: selection.phase, // Store phase key (phase1, phase2, phase3)
-          phaseName: phases[selection.phase].name, // Store phase name for display
-          slot: selection.slot
-        });
-      }
+    for (const sel of selectedTeachers) {
+      const bookingKey = getBookingKey(sel.grade, sel.teacher, sel.phase, sel.slot);
+      const { data, error } = await supabase.from('bookings').insert({
+        booking_key: bookingKey,
+        student_name: studentName,
+        student_class: studentClass,
+        student_section: studentSection,
+        grade: sel.grade,
+        teacher: sel.teacher,
+        phase: sel.phase,
+        slot_number: sel.slot,
+        time_slot: `${phases[sel.phase].name} - Slot ${sel.slot}`,
+        status: 'pending'
+      }).select();
+
+      if (error) errors.push({ teacher: sel.teacher, error: error.message });
+      else results.push({ teacher: sel.teacher, grade: sel.grade, phase: sel.phase, phaseName: phases[sel.phase].name, slot: sel.slot });
     }
 
-    if (errors.length > 0) {
-      alert('Some bookings failed:\n' + errors.map(e => `${e.teacher}: ${e.error}`).join('\n'));
-    }
-
-    if (results.length > 0) {
-      setConfirmations(results);
-      setShowConfirmation(true);
-    } else {
-      alert('No bookings were successful. Please check the console for errors.');
-    }
-    
-    // Don't reset form - let parent see and screenshot
+    if (errors.length > 0) alert('Some bookings failed:\n' + errors.map(e => `${e.teacher}: ${e.error}`).join('\n'));
+    if (results.length > 0) { setConfirmations(results); setShowConfirmation(true); }
+    else alert('No bookings were successful.');
   };
 
-  // Teacher functions
+  // ─── Teacher functions ────────────────────────────────────────────────────
   const updateBookingStatus = async (bookingKey, newStatus) => {
-    const { error } = await supabase
-      .from('bookings')
-      .update({ status: newStatus })
-      .eq('booking_key', bookingKey);
-
-    if (error) {
-      console.error('Error updating status:', error);
-      alert('Failed to update status');
-    }
+    const { error } = await supabase.from('bookings').update({ status: newStatus }).eq('booking_key', bookingKey);
+    if (error) alert('Failed to update status');
   };
 
   const toggleBreakStatus = async () => {
     const currentStatus = teacherStatus[loggedInTeacher]?.isOnBreak || false;
-    
-    // Upsert teacher status
-    const { error } = await supabase
-      .from('teacher_status')
-      .upsert({
-        teacher_name: loggedInTeacher,
-        is_on_break: !currentStatus,
-        break_started_at: !currentStatus ? new Date() : null,
-        updated_at: new Date()
-      }, {
-        onConflict: 'teacher_name'
-      });
-
-    if (error) {
-      console.error('Error updating break status:', error);
-    }
+    await supabase.from('teacher_status').upsert({
+      teacher_name: loggedInTeacher,
+      is_on_break: !currentStatus,
+      break_started_at: !currentStatus ? new Date() : null,
+      updated_at: new Date()
+    }, { onConflict: 'teacher_name' });
   };
 
-  // Export function
+  const getTeacherGrades = (teacherName) => {
+    return GRADES.filter(g => (teacherData[g] || []).includes(teacherName));
+  };
+
+  // ─── Parent tracking ──────────────────────────────────────────────────────
+  const handleTrackBookings = async () => {
+    if (!trackingStudentName || !trackingStudentClass || !trackingStudentSection) {
+      alert('Please select grade, section, and student name');
+      return;
+    }
+    const searchName = trackingStudentName.trim();
+    const searchClass = trackingStudentClass.trim();
+    const searchSection = trackingStudentSection.trim();
+
+    const { data: data1 } = await supabase.from('bookings').select('*')
+      .ilike('student_name', `%${searchName}%`)
+      .ilike('student_class', searchClass)
+      .ilike('student_section', searchSection);
+
+    const { data: data2 } = await supabase.from('bookings').select('*')
+      .ilike('student_name', `%${searchName}%`)
+      .ilike('student_class', `${searchClass}-${searchSection}`);
+
+    const allData = [...(data1 || []), ...(data2 || [])];
+    const uniqueData = Array.from(new Map(allData.map(item => [item.id, item])).values())
+      .sort((a, b) => a.phase !== b.phase ? a.phase.localeCompare(b.phase) : a.slot_number - b.slot_number);
+
+    if (uniqueData.length === 0) {
+      alert(`No appointments found for "${searchName}" in ${searchClass}-${searchSection}`);
+      return;
+    }
+
+    const formattedBookings = uniqueData.map(booking => ({
+      id: booking.id,
+      teacher: booking.teacher,
+      grade: booking.grade,
+      phase: booking.phase,
+      slot: booking.slot_number,
+      timing: phases[booking.phase]?.timings[booking.slot_number - 1] || '',
+      phaseName: phases[booking.phase]?.name || '',
+      status: booking.status,
+      teacherStatus: teacherStatus[booking.teacher]?.isOnBreak ? 'break' : 'ready'
+    }));
+
+    setTrackedBookings(formattedBookings);
+    setShowTrackingView(true);
+  };
+
+  // ─── Admin functions ──────────────────────────────────────────────────────
   const exportToCSV = () => {
-    const csvRows = [];
-    csvRows.push('Grade,Teacher,Phase,Slot,Student Name,Class,Section,Status');
-    
-    Object.entries(bookings).forEach(([key, booking]) => {
-      csvRows.push(`${booking.grade},${booking.teacher},${booking.phase},${booking.slot},${booking.studentName},${booking.studentClass},${booking.studentSection},${booking.status}`);
+    const csvRows = ['Grade,Teacher,Phase,Slot,Student Name,Class,Section,Status'];
+    Object.entries(bookings).forEach(([, b]) => {
+      csvRows.push(`${b.grade},${b.teacher},${b.phase},${b.slot},${b.studentName},${b.studentClass},${b.studentSection},${b.status}`);
     });
-    
-    const csvContent = csvRows.join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv' });
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `ptm-schedule-${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
+    const a = document.createElement('a'); a.href = url;
+    a.download = `ptm-schedule-${new Date().toISOString().split('T')[0]}.csv`; a.click();
   };
 
   const clearAllBookings = async () => {
     if (!window.confirm('Clear ALL bookings? This cannot be undone!')) return;
-    
-    const { error } = await supabase
-      .from('bookings')
-      .delete()
-      .neq('id', '00000000-0000-0000-0000-000000000000');
-      
-    if (error) {
-      console.error('Error clearing bookings:', error);
-    }
+    await supabase.from('bookings').delete().neq('id', '00000000-0000-0000-0000-000000000000');
   };
 
   const cleanupConflictingBookings = async () => {
-    if (!window.confirm('This will scan for and remove conflicting bookings:\n\n1. Same student with same slot for different teachers\n2. Same student with same teacher multiple times\n3. Same student with consecutive slots\n\nThe FIRST booking will be kept, duplicates will be deleted.\n\nContinue?')) {
-      return;
-    }
-
+    if (!window.confirm('Scan and remove conflicting bookings? First booking is kept.')) return;
     setIsLoading(true);
-    
     try {
-      // Fetch ALL bookings
-      const { data: allBookings, error: fetchError } = await supabase
-        .from('bookings')
-        .select('*')
-        .order('created_at', { ascending: true }); // Keep oldest first
-
-      if (fetchError) throw fetchError;
-
-      console.log(`Total bookings: ${allBookings.length}`);
-
+      const { data: allBookings, error } = await supabase.from('bookings').select('*').order('created_at', { ascending: true });
+      if (error) throw error;
       const toDelete = [];
-      const studentBookings = {}; // Track what each student has booked
-
+      const studentBookings = {};
       for (const booking of allBookings) {
-        const studentKey = `${booking.student_name}-${booking.student_class}-${booking.student_section}`.toLowerCase();
-        
-        if (!studentBookings[studentKey]) {
-          studentBookings[studentKey] = {
-            slots: new Set(), // Track booked slots per phase
-            teachers: new Set(), // Track booked teachers
-            bookings: []
-          };
-        }
-
-        const student = studentBookings[studentKey];
+        const key = `${booking.student_name}-${booking.student_class}-${booking.student_section}`.toLowerCase();
+        if (!studentBookings[key]) studentBookings[key] = { slots: new Set(), teachers: new Set() };
+        const s = studentBookings[key];
         const slotKey = `${booking.phase}-${booking.slot_number}`;
-        
         let shouldDelete = false;
-        let reason = '';
-
-        // Check 1: Same slot already booked in this phase?
-        if (student.slots.has(slotKey)) {
-          shouldDelete = true;
-          reason = 'Duplicate slot';
-        }
-
-        // Check 2: Same teacher already booked?
-        if (student.teachers.has(booking.teacher)) {
-          shouldDelete = true;
-          reason = 'Duplicate teacher';
-        }
-
-        // Check 3: Consecutive slot violation?
-        const slotNum = booking.slot_number;
-        const prevSlotKey = `${booking.phase}-${slotNum - 1}`;
-        const nextSlotKey = `${booking.phase}-${slotNum + 1}`;
-        if (student.slots.has(prevSlotKey) || student.slots.has(nextSlotKey)) {
-          shouldDelete = true;
-          reason = 'Consecutive slot';
-        }
-
-        if (shouldDelete) {
-          toDelete.push({
-            id: booking.id,
-            student: booking.student_name,
-            teacher: booking.teacher,
-            phase: booking.phase,
-            slot: booking.slot_number,
-            reason
-          });
-        } else {
-          // Keep this booking - track it
-          student.slots.add(slotKey);
-          student.teachers.add(booking.teacher);
-          student.bookings.push(booking);
-        }
+        if (s.slots.has(slotKey)) shouldDelete = true;
+        if (s.teachers.has(booking.teacher)) shouldDelete = true;
+        const prev = `${booking.phase}-${booking.slot_number - 1}`;
+        const next = `${booking.phase}-${booking.slot_number + 1}`;
+        if (s.slots.has(prev) || s.slots.has(next)) shouldDelete = true;
+        if (shouldDelete) toDelete.push(booking.id);
+        else { s.slots.add(slotKey); s.teachers.add(booking.teacher); }
       }
-
-      console.log(`Found ${toDelete.length} conflicting bookings to delete`);
-
-      if (toDelete.length === 0) {
-        alert('✅ No conflicting bookings found! Database is clean.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Show summary
-      const summary = toDelete.slice(0, 10).map(b => 
-        `${b.student} - ${b.teacher} - ${b.phase} Slot ${b.slot} (${b.reason})`
-      ).join('\n');
-      
-      const showMore = toDelete.length > 10 ? `\n... and ${toDelete.length - 10} more` : '';
-      
-      if (!window.confirm(`Found ${toDelete.length} conflicts:\n\n${summary}${showMore}\n\nDelete these bookings?`)) {
-        setIsLoading(false);
-        return;
-      }
-
-      // Delete conflicts
-      const deleteIds = toDelete.map(b => b.id);
-      const { error: deleteError } = await supabase
-        .from('bookings')
-        .delete()
-        .in('id', deleteIds);
-
-      if (deleteError) throw deleteError;
-
-      alert(`✅ Successfully deleted ${toDelete.length} conflicting bookings!\n\nDatabase is now clean.`);
-      
-      // Reload data
+      if (toDelete.length === 0) { alert('✅ No conflicts found!'); setIsLoading(false); return; }
+      if (!window.confirm(`Found ${toDelete.length} conflicts. Delete them?`)) { setIsLoading(false); return; }
+      await supabase.from('bookings').delete().in('id', toDelete);
+      alert(`✅ Deleted ${toDelete.length} conflicting bookings!`);
       await loadBookings();
-
-    } catch (error) {
-      console.error('Cleanup error:', error);
-      alert('❌ Error during cleanup: ' + error.message);
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setIsLoading(false); }
   };
 
   const normalizeOldData = async () => {
-    if (!window.confirm('This will fix old bookings where student_class contains both grade and section.\n\nExample: "XII-D" will be split into:\n- student_class: "XII"\n- student_section: "D"\n\nThis is safe and recommended. Continue?')) {
-      return;
-    }
-
+    if (!window.confirm('Fix old bookings where student_class contains "XII-D" format?')) return;
     setIsLoading(true);
-    
     try {
-      // Fetch ALL bookings
-      const { data: allBookings, error: fetchError } = await supabase
-        .from('bookings')
-        .select('*');
-
-      if (fetchError) throw fetchError;
-
-      console.log(`Total bookings to check: ${allBookings.length}`);
-
-      const toUpdate = [];
-
-      for (const booking of allBookings) {
-        // Check if student_class contains a hyphen (e.g., "XII-D")
-        if (booking.student_class && booking.student_class.includes('-')) {
-          const parts = booking.student_class.split('-');
-          const grade = parts[0]; // "XII"
-          const section = parts[1]; // "D"
-          
-          toUpdate.push({
-            id: booking.id,
-            old: booking.student_class,
-            newClass: grade,
-            newSection: section || booking.student_section // Use existing section if split fails
-          });
-        }
-      }
-
-      console.log(`Found ${toUpdate.length} bookings to normalize`);
-
-      if (toUpdate.length === 0) {
-        alert('✅ No old format bookings found! Database is already normalized.');
-        setIsLoading(false);
-        return;
-      }
-
-      // Show summary
-      const summary = toUpdate.slice(0, 10).map(b => 
-        `"${b.old}" → class: "${b.newClass}", section: "${b.newSection}"`
-      ).join('\n');
-      
-      const showMore = toUpdate.length > 10 ? `\n... and ${toUpdate.length - 10} more` : '';
-      
-      if (!window.confirm(`Found ${toUpdate.length} bookings to fix:\n\n${summary}${showMore}\n\nNormalize these bookings?`)) {
-        setIsLoading(false);
-        return;
-      }
-
-      // Update each booking
-      let updated = 0;
-      let errors = 0;
-
+      const { data } = await supabase.from('bookings').select('*');
+      const toUpdate = data.filter(b => b.student_class?.includes('-')).map(b => {
+        const [cls, sec] = b.student_class.split('-');
+        return { id: b.id, newClass: cls, newSection: sec || b.student_section };
+      });
+      if (toUpdate.length === 0) { alert('✅ Already normalized!'); setIsLoading(false); return; }
       for (const item of toUpdate) {
-        const { error } = await supabase
-          .from('bookings')
-          .update({
-            student_class: item.newClass,
-            student_section: item.newSection
-          })
-          .eq('id', item.id);
-
-        if (error) {
-          console.error(`Error updating booking ${item.id}:`, error);
-          errors++;
-        } else {
-          updated++;
-        }
+        await supabase.from('bookings').update({ student_class: item.newClass, student_section: item.newSection }).eq('id', item.id);
       }
-
-      alert(`✅ Normalization complete!\n\nUpdated: ${updated}\nErrors: ${errors}\n\nDatabase is now normalized.`);
-      
-      // Reload data
+      alert(`✅ Normalized ${toUpdate.length} bookings!`);
       await loadBookings();
-
-    } catch (error) {
-      console.error('Normalization error:', error);
-      alert('❌ Error during normalization: ' + error.message);
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setIsLoading(false); }
   };
 
   const diagnoseBookings = async () => {
-    if (!window.confirm('This will check for bookings that exist in database but don\'t show in teacher grids.\n\nContinue?')) {
-      return;
-    }
-
+    if (!window.confirm('Diagnose bookings for key mismatches?')) return;
     setIsLoading(true);
-    
     try {
-      // Fetch ALL bookings
-      const { data: allBookings, error: fetchError } = await supabase
-        .from('bookings')
-        .select('*');
-
-      if (fetchError) throw fetchError;
-
-      console.log(`Total bookings in database: ${allBookings.length}`);
-
-      const issues = [];
-      const bookingsByKey = {};
-
-      allBookings.forEach(booking => {
-        // Generate what the key SHOULD be
-        const correctKey = `${booking.grade}-${booking.teacher}-${booking.phase}-${booking.slot_number}`;
-        const storedKey = booking.booking_key;
-
-        // Track all bookings by correct key
-        if (!bookingsByKey[correctKey]) {
-          bookingsByKey[correctKey] = [];
-        }
-        bookingsByKey[correctKey].push(booking);
-
-        // Check for issues
-        if (storedKey !== correctKey) {
-          issues.push({
-            type: 'KEY_MISMATCH',
-            student: booking.student_name,
-            teacher: booking.teacher,
-            grade: booking.grade,
-            phase: booking.phase,
-            slot: booking.slot_number,
-            storedKey: storedKey,
-            correctKey: correctKey,
-            id: booking.id
-          });
-        }
-
-        // Check for duplicate keys
-        if (bookingsByKey[correctKey].length > 1) {
-          issues.push({
-            type: 'DUPLICATE_KEY',
-            student: booking.student_name,
-            teacher: booking.teacher,
-            grade: booking.grade,
-            phase: booking.phase,
-            slot: booking.slot_number,
-            key: correctKey,
-            count: bookingsByKey[correctKey].length
-          });
-        }
+      const { data } = await supabase.from('bookings').select('*');
+      const issues = data.filter(b => {
+        const correct = `${b.grade}-${b.teacher}-${b.phase}-${b.slot_number}`;
+        return b.booking_key !== correct;
       });
-
-      // Group issues by type
-      const keyMismatches = issues.filter(i => i.type === 'KEY_MISMATCH');
-      const duplicates = issues.filter(i => i.type === 'DUPLICATE_KEY');
-
-      console.log('Diagnosis Results:', {
-        totalBookings: allBookings.length,
-        keyMismatches: keyMismatches.length,
-        duplicates: duplicates.length
-      });
-
-      // Show results
-      let message = `📊 DIAGNOSIS RESULTS\n\n`;
-      message += `Total Bookings: ${allBookings.length}\n`;
-      message += `Key Mismatches: ${keyMismatches.length}\n`;
-      message += `Duplicates: ${duplicates.length}\n\n`;
-
-      if (keyMismatches.length > 0) {
-        message += `❌ KEY MISMATCHES (bookings won't show in teacher grid):\n\n`;
-        keyMismatches.slice(0, 10).forEach(issue => {
-          message += `${issue.student} → ${issue.teacher}\n`;
-          message += `  Stored: ${issue.storedKey}\n`;
-          message += `  Correct: ${issue.correctKey}\n\n`;
-        });
-        if (keyMismatches.length > 10) {
-          message += `... and ${keyMismatches.length - 10} more\n\n`;
+      if (issues.length === 0) { alert('✅ All booking keys are correct!'); setIsLoading(false); return; }
+      if (window.confirm(`Found ${issues.length} key mismatches. Fix them?`)) {
+        for (const b of issues) {
+          const correct = `${b.grade}-${b.teacher}-${b.phase}-${b.slot_number}`;
+          await supabase.from('bookings').update({ booking_key: correct }).eq('id', b.id);
         }
+        alert(`✅ Fixed ${issues.length} booking keys!`);
+        await loadBookings();
       }
-
-      if (duplicates.length > 0) {
-        message += `⚠️ DUPLICATES:\n`;
-        duplicates.slice(0, 5).forEach(issue => {
-          message += `${issue.student} → ${issue.teacher} (${issue.count} copies)\n`;
-        });
-      }
-
-      alert(message);
-
-      // Ask to fix
-      if (keyMismatches.length > 0) {
-        if (window.confirm(`Found ${keyMismatches.length} bookings with wrong keys.\n\nFix them now?`)) {
-          await fixBookingKeys(keyMismatches);
-        }
-      }
-
-    } catch (error) {
-      console.error('Diagnosis error:', error);
-      alert('❌ Error during diagnosis: ' + error.message);
-    } finally {
-      setIsLoading(false);
-    }
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setIsLoading(false); }
   };
 
-  const fixBookingKeys = async (issues) => {
-    let fixed = 0;
-    let errors = 0;
-
-    for (const issue of issues) {
-      const { error } = await supabase
-        .from('bookings')
-        .update({ booking_key: issue.correctKey })
-        .eq('id', issue.id);
-
-      if (error) {
-        console.error(`Error fixing booking ${issue.id}:`, error);
-        errors++;
-      } else {
-        fixed++;
-      }
-    }
-
-    alert(`✅ Fixed ${fixed} booking keys!\nErrors: ${errors}\n\nRefresh to see changes.`);
-    await loadBookings();
-  };
-
-  // Teacher upload functions
-  const handleExcelUpload = (event) => {
+  // ─── Teacher upload (existing logic, updated for VI-XII) ──────────────────
+  const handleTeacherExcelUpload = (event) => {
     const file = event.target.files[0];
     if (!file) return;
-
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        // Parse Excel file using SheetJS (XLSX library loaded via CDN)
         const data = new Uint8Array(e.target.result);
-        const workbook = window.XLSX.read(data, { type: 'array' });
-        
-        // Get first sheet
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        
-        // Convert to JSON
-        const jsonData = window.XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        
-        // Parse teacher data
-        const grades = ['IX', 'X', 'XI', 'XII'];
-        const parsedData = {
-          'IX': [],
-          'X': [],
-          'XI': [],
-          'XII': []
-        };
-        
-        // Assuming first row is header with grade names
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
         const headerRow = jsonData[0];
         const gradeColumns = {};
-        
-        headerRow.forEach((header, index) => {
-          if (grades.includes(header)) {
-            gradeColumns[header] = index;
-          }
-        });
-        
-        // Parse teachers from each column
+        headerRow.forEach((h, i) => { if (GRADES.includes(h)) gradeColumns[h] = i; });
+        const parsedData = Object.fromEntries(GRADES.map(g => [g, []]));
         for (let i = 1; i < jsonData.length; i++) {
           const row = jsonData[i];
-          grades.forEach(grade => {
-            const colIndex = gradeColumns[grade];
-            if (colIndex !== undefined && row[colIndex]) {
-              const teacherName = String(row[colIndex]).trim();
-              if (teacherName && !parsedData[grade].includes(teacherName)) {
-                parsedData[grade].push(teacherName);
-              }
+          GRADES.forEach(grade => {
+            const col = gradeColumns[grade];
+            if (col !== undefined && row[col]) {
+              const name = String(row[col]).trim();
+              if (name && !parsedData[grade].includes(name)) parsedData[grade].push(name);
             }
           });
         }
-        
-        // Sort teachers alphabetically
-        Object.keys(parsedData).forEach(grade => {
-          parsedData[grade].sort();
-        });
-        
+        GRADES.forEach(g => parsedData[g].sort());
         setUploadedTeachers(parsedData);
-        
-      } catch (error) {
-        console.error('Error parsing Excel:', error);
-        alert('Error parsing Excel file. Please ensure it has columns IX, X, XI, XII with teacher names.');
+      } catch (err) {
+        alert('Error parsing Excel. Ensure columns are: VI, VII, VIII, IX, X, XI, XII');
       }
     };
-    
     reader.readAsArrayBuffer(file);
   };
 
   const saveUploadedTeachers = async () => {
     if (!uploadedTeachers) return;
-    
     try {
-      // Step 1: Clear existing teachers from database
-      console.log('Clearing existing teachers from database...');
-      const { error: deleteError } = await supabase
-        .from('teachers')
-        .delete()
-        .neq('id', '00000000-0000-0000-0000-000000000000');
-      
-      if (deleteError) {
-        console.error('Error clearing teachers:', deleteError);
-        alert('Error clearing old teacher data. Please try again.');
-        return;
-      }
-      
-      // Step 2: Prepare new teacher records
-      const teacherRecords = [];
-      const grades = ['IX', 'X', 'XI', 'XII'];
-      
-      grades.forEach(grade => {
-        uploadedTeachers[grade].forEach(teacherName => {
-          teacherRecords.push({
-            teacher_name: teacherName,
-            grade: grade
-          });
-        });
+      await supabase.from('teachers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      const records = [];
+      GRADES.forEach(grade => {
+        uploadedTeachers[grade].forEach(name => records.push({ teacher_name: name, grade }));
       });
-      
-      console.log(`Uploading ${teacherRecords.length} teachers to database...`);
-      
-      // Step 3: Insert new teachers in batches (Supabase limit is ~1000 per insert)
-      const batchSize = 100;
-      for (let i = 0; i < teacherRecords.length; i += batchSize) {
-        const batch = teacherRecords.slice(i, i + batchSize);
-        
-        const { error: insertError } = await supabase
-          .from('teachers')
-          .insert(batch);
-        
-        if (insertError) {
-          console.error('Error inserting batch:', insertError);
-          alert(`Error uploading teachers (batch ${Math.floor(i/batchSize) + 1}). Please try again.`);
-          return;
-        }
+      for (let i = 0; i < records.length; i += 100) {
+        const { error } = await supabase.from('teachers').insert(records.slice(i, i + 100));
+        if (error) { alert('Error uploading batch: ' + error.message); return; }
       }
-      
-      console.log('✅ All teachers uploaded successfully!');
-      
-      // Step 4: Update local state
       setTeacherData(uploadedTeachers);
-      
-      // Step 5: Close modal and reset
       setShowTeacherUpload(false);
       setUploadedTeachers(null);
-      
-      // Step 6: Show success message
-      alert(`✅ Teacher list updated successfully!\n\n${teacherRecords.length} teachers saved to database.\n\nChanges are now permanent.`);
-      
-    } catch (error) {
-      console.error('Exception saving teachers:', error);
-      alert('Unexpected error saving teachers. Check console for details.');
-    }
+      alert(`✅ ${records.length} teachers saved!`);
+    } catch (e) { alert('Error: ' + e.message); }
   };
 
-  // Get teacher grades
-  const getTeacherGrades = (teacherName) => {
-    const grades = [];
-    Object.entries(teacherData).forEach(([grade, teachers]) => {
-      if (teachers.includes(teacherName)) {
-        grades.push(grade);
+  // ─── Student upload ───────────────────────────────────────────────────────
+  const handleStudentExcelUpload = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        // Find header row — look for Serial/SID/Name columns
+        let headerRow = 0;
+        let colSerial = -1, colSid = -1, colName = -1;
+
+        for (let i = 0; i < Math.min(5, jsonData.length); i++) {
+          const row = jsonData[i].map(c => String(c || '').toLowerCase().trim());
+          const sIdx = row.findIndex(c => c.includes('serial') || c === 's.no' || c === 'sno' || c === 'sr');
+          const sidIdx = row.findIndex(c => c.includes('sid') || c.includes('admission') || c.includes('roll'));
+          const nameIdx = row.findIndex(c => c.includes('name'));
+          if (nameIdx >= 0) { headerRow = i; colSerial = sIdx; colSid = sidIdx; colName = nameIdx; break; }
+        }
+
+        if (colName < 0) { alert('Could not find "Name" column. Ensure your Excel has columns: Serial Number, SID Number, Name of Student'); return; }
+
+        const students = [];
+        for (let i = headerRow + 1; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          const name = row[colName] ? String(row[colName]).trim() : '';
+          if (!name) continue;
+          const sid = colSid >= 0 && row[colSid] ? String(row[colSid]).trim() : `${studentUploadGrade}-${studentUploadSection}-${i}`;
+          const serial = colSerial >= 0 && row[colSerial] ? parseInt(row[colSerial]) : i;
+          students.push({ name, sid, serial });
+        }
+
+        setUploadedStudents(students);
+      } catch (err) {
+        console.error(err);
+        alert('Error parsing Excel: ' + err.message);
       }
-    });
-    return grades;
+    };
+    reader.readAsArrayBuffer(file);
   };
 
-  // Loading state
+  const saveUploadedStudents = async () => {
+    if (!uploadedStudents || !studentUploadGrade || !studentUploadSection) return;
+    setStudentUploadLoading(true);
+    try {
+      // Delete existing students for this grade+section
+      await supabase.from('students').delete()
+        .eq('grade', studentUploadGrade)
+        .eq('section', studentUploadSection);
+
+      const records = uploadedStudents.map(s => ({
+        sid: s.sid,
+        name: s.name,
+        grade: studentUploadGrade,
+        section: studentUploadSection,
+        serial_number: s.serial
+      }));
+
+      for (let i = 0; i < records.length; i += 100) {
+        const { error } = await supabase.from('students').insert(records.slice(i, i + 100));
+        if (error) { alert('Error saving students: ' + error.message); setStudentUploadLoading(false); return; }
+      }
+
+      alert(`✅ ${records.length} students saved for Grade ${studentUploadGrade}-${studentUploadSection}!`);
+      setUploadedStudents(null);
+      setStudentUploadGrade('');
+      setStudentUploadSection('');
+      setShowStudentUpload(false);
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { setStudentUploadLoading(false); }
+  };
+
+  // ─── Teacher accounts upload ──────────────────────────────────────────────
+  const handleTeacherAccountsExcel = (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: 'array' });
+        const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        // Find header row - look for Name/Grade/Email columns
+        let headerRow = 0;
+        let colName = -1, colGrade = -1, colEmail = -1;
+        for (let i = 0; i < Math.min(5, jsonData.length); i++) {
+          const row = jsonData[i].map(c => String(c || '').toLowerCase().trim());
+          const nIdx = row.findIndex(c => c.includes('name') || c === 'teacher');
+          const gIdx = row.findIndex(c => c.includes('grade') || c === 'class');
+          const eIdx = row.findIndex(c => c.includes('email') || c === 'mail');
+          if (nIdx >= 0 && eIdx >= 0) {
+            headerRow = i; colName = nIdx; colGrade = gIdx; colEmail = eIdx; break;
+          }
+        }
+
+        if (colName < 0 || colEmail < 0) {
+          alert('Could not find required columns. Excel must have: Teacher Name, Grade, Email');
+          return;
+        }
+
+        const teachers = [];
+        for (let i = headerRow + 1; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          const name = row[colName] ? String(row[colName]).trim().toUpperCase() : '';
+          const email = row[colEmail] ? String(row[colEmail]).trim().toLowerCase() : '';
+          const grade = colGrade >= 0 && row[colGrade] ? String(row[colGrade]).trim().toUpperCase() : '';
+          if (!name || !email) continue;
+          if (!email.includes('@')) continue; // basic email check
+          teachers.push({ name, grade, email });
+        }
+
+        if (teachers.length === 0) {
+          alert('No valid teacher records found. Check your Excel format.');
+          return;
+        }
+
+        setUploadedTeacherAccounts(teachers);
+        setTeacherAccountsResults(null);
+      } catch (err) {
+        alert('Error parsing Excel: ' + err.message);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const saveTeacherAccounts = async () => {
+    if (!uploadedTeacherAccounts) return;
+    setTeacherAccountsLoading(true);
+    setTeacherAccountsResults(null);
+
+    const results = { created: [], updated: [], failed: [] };
+
+    for (const teacher of uploadedTeacherAccounts) {
+      try {
+        // Step 1: Check if auth user already exists by trying to create
+        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+          email: teacher.email,
+          password: 'SBSptm@1234',
+          email_confirm: true,  // skip email confirmation
+          user_metadata: { teacher_name: teacher.name }
+        });
+
+        if (authError) {
+          if (authError.message.includes('already been registered') || authError.message.includes('already exists')) {
+            // User exists — just update the teachers table
+            const { error: updateError } = await supabase
+              .from('teachers')
+              .update({ auth_email: teacher.email })
+              .eq('teacher_name', teacher.name);
+
+            if (updateError) {
+              results.failed.push({ name: teacher.name, email: teacher.email, reason: 'Auth exists but DB update failed: ' + updateError.message });
+            } else {
+              results.updated.push({ name: teacher.name, email: teacher.email });
+            }
+          } else {
+            results.failed.push({ name: teacher.name, email: teacher.email, reason: authError.message });
+          }
+          continue;
+        }
+
+        // Step 2: Update or insert teacher in teachers table with auth_email
+        if (teacher.grade && GRADES.includes(teacher.grade)) {
+          // Upsert into teachers table
+          const { error: dbError } = await supabase
+            .from('teachers')
+            .upsert({
+              teacher_name: teacher.name,
+              grade: teacher.grade,
+              auth_email: teacher.email
+            }, { onConflict: 'teacher_name,grade' });
+
+          if (dbError) {
+            // Try just updating auth_email if record exists
+            await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
+          }
+        } else {
+          // No grade in excel, just update auth_email for existing teacher
+          await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
+        }
+
+        results.created.push({ name: teacher.name, email: teacher.email });
+
+      } catch (err) {
+        results.failed.push({ name: teacher.name, email: teacher.email, reason: err.message });
+      }
+    }
+
+    setTeacherAccountsResults(results);
+    setTeacherAccountsLoading(false);
+
+    // Reload teacher data
+    await loadTeachersFromDatabase();
+  };
+
+  // ─── Loading screen ───────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
@@ -1179,66 +901,85 @@ const PTMScheduler = () => {
     );
   }
 
-  // Login Modal
+  // ─── LOGIN MODAL ──────────────────────────────────────────────────────────
   if (showLogin) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center p-4">
         <div className="bg-white rounded-lg shadow-2xl p-8 w-full max-w-md">
           <h2 className="text-2xl font-bold mb-6 text-center">Staff Login</h2>
-          
+
           <div className="flex gap-2 mb-6">
-            <button
-              onClick={() => setLoginType('teacher')}
-              className={`flex-1 py-2 rounded-lg font-semibold ${
-                loginType === 'teacher' 
-                  ? 'bg-indigo-600 text-white' 
-                  : 'bg-gray-200 text-gray-600'
-              }`}
-            >
-              <User className="inline mr-2" size={18} />
-              Teacher Login
+            <button onClick={() => { setLoginType('teacher'); setLoginError(''); }}
+              className={`flex-1 py-2 rounded-lg font-semibold ${loginType === 'teacher' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+              <User className="inline mr-2" size={18} /> Teacher
             </button>
-            <button
-              onClick={() => setLoginType('admin')}
-              className={`flex-1 py-2 rounded-lg font-semibold ${
-                loginType === 'admin' 
-                  ? 'bg-indigo-600 text-white' 
-                  : 'bg-gray-200 text-gray-600'
-              }`}
-            >
-              <Lock className="inline mr-2" size={18} />
-              Admin Access
+            <button onClick={() => { setLoginType('admin'); setLoginError(''); }}
+              className={`flex-1 py-2 rounded-lg font-semibold ${loginType === 'admin' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
+              <Lock className="inline mr-2" size={18} /> Admin
             </button>
           </div>
 
-          <input
-            type={loginType === 'admin' ? 'password' : 'text'}
-            value={loginPassword}
-            onChange={(e) => setLoginPassword(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
-            placeholder={loginType === 'admin' ? 'Admin Password' : 'Your Full Name (e.g., ARPAN DEB)'}
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500"
-          />
+          {loginType === 'teacher' ? (
+            <>
+              <input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)}
+                placeholder="your.email@sbs-school.org"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500" />
+              <input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleTeacherLogin()}
+                placeholder="Password"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
+              {loginError && <p className="text-red-600 text-sm mb-3">{loginError}</p>}
+              <button onClick={handleTeacherLogin} disabled={loginLoading}
+                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700 disabled:bg-gray-400">
+                {loginLoading ? 'Signing in...' : 'Login'}
+              </button>
+              <p className="text-xs text-gray-500 mt-3 text-center">Contact admin if you need your login credentials set up.</p>
+            </>
+          ) : (
+            <>
+              <input type="password" value={adminPwInput} onChange={e => setAdminPwInput(e.target.value)}
+                onKeyPress={e => e.key === 'Enter' && handleAdminLogin()}
+                placeholder="Admin Password"
+                className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
+              {loginError && <p className="text-red-600 text-sm mb-3">{loginError}</p>}
+              <button onClick={handleAdminLogin}
+                className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700">
+                Login as Admin
+              </button>
+            </>
+          )}
 
-          <button
-            onClick={handleLogin}
-            className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700"
-          >
-            Login
-          </button>
-
-          <button
-            onClick={() => setShowLogin(false)}
-            className="w-full mt-3 text-gray-600 py-2"
-          >
-            ← Back to Parent Portal
-          </button>
+          <button onClick={() => { setShowLogin(false); setLoginError(''); }}
+            className="w-full mt-3 text-gray-600 py-2">← Back to Parent Portal</button>
         </div>
       </div>
     );
   }
 
-  // PARENT VIEW (Default)
+  // ─── CHANGE PASSWORD MODAL ────────────────────────────────────────────────
+  const ChangePasswordModal = () => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg p-8 max-w-md w-full">
+        <h2 className="text-xl font-bold mb-6 text-indigo-700 flex items-center gap-2"><Key size={20} /> Change Password</h2>
+        <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+          placeholder="New password (min 6 characters)"
+          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500" />
+        <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+          placeholder="Confirm new password"
+          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
+        {changePwError && <p className="text-red-600 text-sm mb-3">{changePwError}</p>}
+        {changePwSuccess && <p className="text-green-600 text-sm mb-3">{changePwSuccess}</p>}
+        <div className="flex gap-2">
+          <button onClick={handleChangePassword}
+            className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700">Save Password</button>
+          <button onClick={() => { setShowChangePassword(false); setChangePwError(''); setNewPassword(''); setConfirmPassword(''); }}
+            className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ─── PARENT VIEW ──────────────────────────────────────────────────────────
   if (!userRole) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4">
@@ -1249,28 +990,16 @@ const PTMScheduler = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <h1 className="text-3xl font-bold">PTM Scheduling System</h1>
-                  <p className="text-sm opacity-90 mt-1">Step By Step School</p>
+                  <p className="text-sm opacity-90 mt-1">Step By Step School • {ptmDate}</p>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setShowTrackingView(true);
-                      setTrackingStudentName('');
-                      setTrackingStudentClass('');
-                      setTrackingStudentSection('');
-                      setTrackedBookings([]);
-                    }}
-                    className="flex items-center gap-2 bg-yellow-400 text-gray-800 px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500"
-                  >
-                    <Calendar size={18} />
-                    View My Appointments
+                  <button onClick={() => { setShowTrackingView(true); setTrackingStudentName(''); setTrackingStudentClass(''); setTrackingStudentSection(''); setTrackedBookings([]); }}
+                    className="flex items-center gap-2 bg-yellow-400 text-gray-800 px-4 py-2 rounded-lg font-semibold hover:bg-yellow-500">
+                    <Calendar size={18} /> View My Appointments
                   </button>
-                  <button
-                    onClick={() => setShowLogin(true)}
-                    className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50"
-                  >
-                    <User size={18} />
-                    Staff Login
+                  <button onClick={() => setShowLogin(true)}
+                    className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50">
+                    <User size={18} /> Staff Login
                   </button>
                 </div>
               </div>
@@ -1285,114 +1014,78 @@ const PTMScheduler = () => {
                     <h3 className="text-2xl font-bold text-green-700 mb-2">Bookings Confirmed!</h3>
                     <p className="text-gray-600">📸 Take a screenshot of this confirmation</p>
                   </div>
-                  
-                  {/* Student Details */}
                   <div className="bg-indigo-50 rounded-lg p-4 mb-6 border-2 border-indigo-200">
                     <h4 className="font-bold text-indigo-900 mb-2">Student Details:</h4>
                     <p className="text-indigo-800"><strong>Name:</strong> {studentName}</p>
-                    <p className="text-indigo-800"><strong>Section:</strong> {studentSection}</p>
+                    <p className="text-indigo-800"><strong>Class:</strong> {studentClass}-{studentSection}</p>
                   </div>
-
-                  {/* Booking List */}
                   <div className="bg-green-50 rounded-lg p-4 mb-6 border-2 border-green-200">
                     <h4 className="font-bold text-green-900 mb-3">Your PTM Appointments:</h4>
                     {confirmations.map((conf, idx) => (
                       <div key={idx} className="bg-white rounded p-3 mb-2 border border-green-300">
                         <p className="font-bold text-lg text-green-800">✓ {conf.teacher}</p>
-                        <p className="text-gray-700">Grade: {conf.grade}</p>
-                        <p className="text-gray-700">
-                          {conf.phaseName} - Slot {conf.slot} ({phases[conf.phase].timings[conf.slot - 1]})
-                        </p>
+                        <p className="text-gray-700">Grade {conf.grade}</p>
+                        <p className="text-gray-700">{conf.phaseName} - Slot {conf.slot} ({phases[conf.phase]?.timings[conf.slot - 1]})</p>
                       </div>
                     ))}
                   </div>
-
                   <div className="bg-yellow-50 border-l-4 border-yellow-400 p-4 mb-6">
-                    <p className="text-sm text-yellow-800">
-                      <strong>📌 Important:</strong> Please arrive 5 minutes before your slot time. 
-                      Watch the display board for teacher status (Green = Ready, Yellow = On break).
-                    </p>
+                    <p className="text-sm text-yellow-800"><strong>📌 Important:</strong> Please arrive 5 minutes before your slot time.</p>
                   </div>
-
-                  <button
-                    onClick={() => {
-                      setShowConfirmation(false);
-                      // Reset form after closing
-                      setStudentName('');
-                      setStudentClass('');
-                      setStudentSection('');
-                      setSelectedTeachers([]);
-                    }}
-                    className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700"
-                  >
+                  <button onClick={() => { setShowConfirmation(false); setStudentName(''); setStudentClass(''); setStudentSection(''); setSelectedTeachers([]); }}
+                    className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700">
                     Done - Book for Another Student
                   </button>
                 </div>
               </div>
             )}
 
-            {/* Tracking View - View My Appointments */}
+            {/* Tracking View */}
             {showTrackingView && !trackedBookings.length && (
               <div className="p-6">
                 <div className="max-w-md mx-auto">
                   <h2 className="text-2xl font-bold text-indigo-700 mb-4">🔍 View My Appointments</h2>
-                  <p className="text-gray-600 mb-6">Enter student details to view your confirmed appointments</p>
-                  
+                  <p className="text-gray-600 mb-6">Select your child's class and section to find their appointments</p>
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
-                      <input
-                        type="text"
-                        value={trackingStudentName}
-                        onChange={(e) => setTrackingStudentName(e.target.value)}
-                        placeholder="e.g., Meera Vaidya"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                      />
-                    </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Class/Grade *</label>
-                      <select
-                        value={trackingStudentClass}
-                        onChange={(e) => setTrackingStudentClass(e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                      >
-                        <option value="">Select Class</option>
-                        <option value="IX">IX</option>
-                        <option value="X">X</option>
-                        <option value="XI">XI</option>
-                        <option value="XII">XII</option>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
+                      <select value={trackingStudentClass} onChange={e => setTrackingStudentClass(e.target.value)}
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Select Grade</option>
+                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
                       </select>
                     </div>
-                    
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
-                      <input
-                        type="text"
-                        value={trackingStudentSection}
-                        onChange={(e) => setTrackingStudentSection(e.target.value)}
-                        placeholder="e.g., A"
+                      <select value={trackingStudentSection} onChange={e => setTrackingStudentSection(e.target.value)}
                         className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                      />
+                        disabled={!trackingStudentClass}>
+                        <option value="">Select Section</option>
+                        {SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
                     </div>
-                    
-                    <button
-                      onClick={handleTrackBookings}
-                      className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700"
-                    >
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
+                      {trackingStudentsLoading ? (
+                        <div className="w-full px-4 py-2 border border-gray-300 rounded-lg text-gray-400">Loading students...</div>
+                      ) : (
+                        <select value={trackingStudentName} onChange={e => setTrackingStudentName(e.target.value)}
+                          className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
+                          disabled={!trackingStudentClass || !trackingStudentSection}>
+                          <option value="">Select Student</option>
+                          {trackingStudentsList.map(s => <option key={s.sid} value={s.name}>{s.name}</option>)}
+                          {trackingStudentsList.length === 0 && trackingStudentClass && trackingStudentSection && (
+                            <option disabled>No students found for this class</option>
+                          )}
+                        </select>
+                      )}
+                    </div>
+                    <button onClick={handleTrackBookings}
+                      className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold hover:bg-indigo-700">
                       View My Appointments
                     </button>
-                    
-                    <button
-                      onClick={() => {
-                        setShowTrackingView(false);
-                        setTrackingStudentName('');
-                        setTrackingStudentClass('');
-                        setTrackingStudentSection('');
-                        setTrackedBookings([]);
-                      }}
-                      className="w-full bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400"
-                    >
+                    <button onClick={() => { setShowTrackingView(false); setTrackingStudentName(''); setTrackingStudentClass(''); setTrackingStudentSection(''); setTrackedBookings([]); }}
+                      className="w-full bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400">
                       Back to Booking
                     </button>
                   </div>
@@ -1400,7 +1093,7 @@ const PTMScheduler = () => {
               </div>
             )}
 
-            {/* Tracking View - Display Appointments */}
+            {/* Tracking Results */}
             {showTrackingView && trackedBookings.length > 0 && (
               <div className="p-6">
                 <div className="mb-6 flex items-center justify-between">
@@ -1408,274 +1101,141 @@ const PTMScheduler = () => {
                     <h2 className="text-2xl font-bold text-indigo-700">📋 My Appointments</h2>
                     <p className="text-sm text-gray-600 mt-1">{ptmDate}</p>
                   </div>
-                  <button
-                    onClick={() => {
-                      setShowTrackingView(false);
-                      setTrackedBookings([]);
-                      setTrackingStudentName('');
-                      setTrackingStudentClass('');
-                      setTrackingStudentSection('');
-                    }}
-                    className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-400"
-                  >
-                    Back
-                  </button>
+                  <button onClick={() => { setShowTrackingView(false); setTrackedBookings([]); setTrackingStudentName(''); setTrackingStudentClass(''); setTrackingStudentSection(''); }}
+                    className="bg-gray-300 text-gray-700 px-4 py-2 rounded-lg font-semibold hover:bg-gray-400">Back</button>
                 </div>
-                
                 <div className="bg-indigo-50 rounded-lg p-4 mb-6">
                   <p className="text-indigo-900"><strong>Student:</strong> {trackingStudentName}</p>
-                  <p className="text-indigo-900"><strong>Class:</strong> {trackingStudentClass} - {trackingStudentSection}</p>
+                  <p className="text-indigo-900"><strong>Class:</strong> {trackingStudentClass}-{trackingStudentSection}</p>
                   <p className="text-indigo-900"><strong>Total Appointments:</strong> {trackedBookings.length}</p>
                 </div>
-
-                {/* Next Appointment Highlight */}
-                {(() => {
-                  const now = new Date();
-                  const currentHour = now.getHours();
-                  const currentMinute = now.getMinutes();
-                  const currentTimeInMinutes = currentHour * 60 + currentMinute;
-                  
-                  // Find next appointment
-                  const nextBooking = trackedBookings.find(booking => {
-                    const [hour, minute] = booking.timing.split(':').map(Number);
-                    const bookingTimeInMinutes = hour * 60 + minute;
-                    return bookingTimeInMinutes >= currentTimeInMinutes;
-                  });
-
-                  if (nextBooking) {
-                    return (
-                      <div className="bg-yellow-100 border-2 border-yellow-400 rounded-lg p-4 mb-6">
-                        <h3 className="font-bold text-yellow-900 mb-2">⏰ NEXT APPOINTMENT:</h3>
-                        <p className="text-lg font-bold text-yellow-900">{nextBooking.teacher}</p>
-                        <p className="text-yellow-800">
-                          {nextBooking.phaseName} - Slot {nextBooking.slot} ({nextBooking.timing})
-                        </p>
-                        <div className="mt-2">
-                          {nextBooking.teacherStatus === 'break' ? (
-                            <span className="inline-block bg-yellow-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
-                              ☕ Teacher on Break
-                            </span>
-                          ) : (
-                            <span className="inline-block bg-green-500 text-white px-3 py-1 rounded-full text-sm font-semibold">
-                              ✓ Teacher Ready
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  }
-                  return null;
-                })()}
-
-                {/* All Appointments List */}
                 <div className="space-y-4">
                   {trackedBookings.map((booking, idx) => {
                     const now = new Date();
-                    const currentHour = now.getHours();
-                    const currentMinute = now.getMinutes();
-                    const currentTimeInMinutes = currentHour * 60 + currentMinute;
-                    const [bookingHour, bookingMinute] = booking.timing.split(':').map(Number);
-                    const bookingTimeInMinutes = bookingHour * 60 + bookingMinute;
-                    const isPast = bookingTimeInMinutes < currentTimeInMinutes;
-                    const isNext = !isPast && trackedBookings.findIndex(b => {
-                      const [h, m] = b.timing.split(':').map(Number);
-                      return (h * 60 + m) >= currentTimeInMinutes;
-                    }) === idx;
-
+                    const currentMins = now.getHours() * 60 + now.getMinutes();
+                    const [bh, bm] = (booking.timing || '0:0').split(':').map(Number);
+                    const bookingMins = bh * 60 + bm;
+                    const isPast = bookingMins < currentMins;
+                    const isNext = !isPast && trackedBookings.findIndex(b => { const [h, m] = (b.timing || '0:0').split(':').map(Number); return h * 60 + m >= currentMins; }) === idx;
                     return (
-                      <div 
-                        key={booking.id} 
-                        className={`border-2 rounded-lg p-4 ${
-                          isNext 
-                            ? 'border-yellow-400 bg-yellow-50' 
-                            : isPast 
-                            ? 'border-gray-300 bg-gray-50 opacity-60'
-                            : 'border-indigo-300 bg-white'
-                        }`}
-                      >
+                      <div key={booking.id} className={`border-2 rounded-lg p-4 ${isNext ? 'border-yellow-400 bg-yellow-50' : isPast ? 'border-gray-300 bg-gray-50 opacity-60' : 'border-indigo-300 bg-white'}`}>
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <h3 className="text-lg font-bold text-gray-800">{booking.teacher}</h3>
                             <p className="text-gray-600">Grade {booking.grade}</p>
-                            <p className="text-indigo-700 font-semibold">
-                              {booking.phaseName} - Slot {booking.slot} • {booking.timing}
-                            </p>
-                            
-                            {/* Meeting Status */}
+                            <p className="text-indigo-700 font-semibold">{booking.phaseName} - Slot {booking.slot} • {booking.timing}</p>
                             <div className="mt-2 flex items-center gap-2">
-                              {booking.status === 'done' && (
-                                <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-semibold">
-                                  ✓ Completed
-                                </span>
-                              )}
-                              {booking.status === 'not_met' && (
-                                <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-semibold">
-                                  ✗ Not Met
-                                </span>
-                              )}
-                              {booking.status === 'met_later' && (
-                                <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-semibold">
-                                  ⏰ Met Later
-                                </span>
-                              )}
-                              {booking.status === 'pending' && !isPast && (
-                                <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">
-                                  ⏳ Pending
-                                </span>
-                              )}
+                              {booking.status === 'done' && <span className="bg-green-100 text-green-800 px-3 py-1 rounded-full text-sm font-semibold">✓ Completed</span>}
+                              {booking.status === 'not_met' && <span className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-semibold">✗ Not Met</span>}
+                              {booking.status === 'met_later' && <span className="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full text-sm font-semibold">⏰ Met Later</span>}
+                              {booking.status === 'pending' && !isPast && <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-semibold">⏳ Pending</span>}
                             </div>
-                            
-                            {/* Teacher Status */}
                             {booking.status === 'pending' && !isPast && (
                               <div className="mt-2">
-                                {booking.teacherStatus === 'break' ? (
-                                  <span className="inline-flex items-center text-yellow-700 text-sm">
-                                    <Coffee size={14} className="mr-1" /> Teacher on Break
-                                  </span>
-                                ) : (
-                                  <span className="inline-flex items-center text-green-700 text-sm">
-                                    <CheckCircle size={14} className="mr-1" /> Teacher Ready
-                                  </span>
-                                )}
+                                {booking.teacherStatus === 'break'
+                                  ? <span className="inline-flex items-center text-yellow-700 text-sm"><Coffee size={14} className="mr-1" /> Teacher on Break</span>
+                                  : <span className="inline-flex items-center text-green-700 text-sm"><CheckCircle size={14} className="mr-1" /> Teacher Ready</span>}
                               </div>
                             )}
                           </div>
-                          
-                          {isNext && !isPast && (
-                            <div className="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">
-                              NEXT
-                            </div>
-                          )}
-                          
-                          {isPast && (
-                            <div className="bg-gray-400 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
-                              PAST
-                            </div>
-                          )}
+                          {isNext && !isPast && <div className="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">NEXT</div>}
+                          {isPast && <div className="bg-gray-400 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">PAST</div>}
                         </div>
                       </div>
                     );
                   })}
                 </div>
-                
-                <div className="mt-6 bg-blue-50 border-l-4 border-blue-400 p-4">
-                  <p className="text-sm text-blue-800">
-                    <strong>💡 Tip:</strong> Arrive 5 minutes before your slot time. Check teacher status above - 
-                    Green means ready, Yellow means on break. This page updates in real-time!
-                  </p>
-                </div>
               </div>
             )}
 
-            {/* Normal Booking Form - Only show if not in tracking view */}
+            {/* Parent Booking Form */}
             {!showTrackingView && (
               <>
-            {/* Instructions */}
-            <div className="p-6 bg-blue-50 border-b">
-              <h2 className="font-bold text-blue-800 mb-2">📋 How to Book:</h2>
-              <ol className="text-sm text-blue-700 space-y-1">
-                <li>1. Enter your child's name and section below</li>
-                <li>2. Select teachers (with grade, phase, and slot)</li>
-                <li>3. Click "Submit All Bookings"</li>
-                <li>4. Take a screenshot of your confirmation</li>
-              </ol>
-            </div>
-
-            {/* Student Details Form */}
-            <div className="p-6 border-b bg-gray-50">
-              <h3 className="text-lg font-bold mb-4">Student Details</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
-                  <input
-                    type="text"
-                    value={studentName}
-                    onChange={(e) => setStudentName(e.target.value)}
-                    placeholder="Full Name"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  />
+                <div className="p-6 bg-blue-50 border-b">
+                  <h2 className="font-bold text-blue-800 mb-2">📋 How to Book:</h2>
+                  <ol className="text-sm text-blue-700 space-y-1">
+                    <li>1. Select your child's grade and section</li>
+                    <li>2. Choose your child's name from the list</li>
+                    <li>3. Select teachers to meet (with phase and slot)</li>
+                    <li>4. Click "Submit All Bookings" and screenshot the confirmation</li>
+                  </ol>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
-                  <select
-                    value={studentClass}
-                    onChange={(e) => setStudentClass(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select Grade</option>
-                    {sheets.map(grade => (
-                      <option key={grade} value={grade}>{grade}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
-                  <select
-                    value={studentSection}
-                    onChange={(e) => setStudentSection(e.target.value)}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="">Select Section</option>
-                    {sections.map(section => (
-                      <option key={section} value={section}>{section}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-            </div>
-
-            {/* Teacher Selection */}
-            <div className="p-6">
-              <h3 className="text-lg font-bold mb-4">Select Teachers to Meet</h3>
-              
-              {/* Selected Teachers List */}
-              {selectedTeachers.length > 0 && (
-                <div className="mb-6 bg-green-50 border-2 border-green-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-green-800 mb-3">Selected Bookings:</h4>
-                  {selectedTeachers.map((selection, idx) => (
-                    <div key={idx} className="flex items-center justify-between bg-white rounded p-3 mb-2">
-                      <div>
-                        <p className="font-semibold">{selection.teacher}</p>
-                        <p className="text-sm text-gray-600">
-                          Grade {selection.grade} • {phases[selection.phase].name} • Slot {selection.slot} ({phases[selection.phase].timings[selection.slot - 1]})
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleRemoveTeacher(idx)}
-                        className="text-red-600 hover:text-red-800 font-semibold"
-                      >
-                        Remove
-                      </button>
+                {/* Student Details - dropdowns */}
+                <div className="p-6 border-b bg-gray-50">
+                  <h3 className="text-lg font-bold mb-4">Student Details</h3>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
+                      <select value={studentClass} onChange={e => setStudentClass(e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+                        <option value="">Select Grade</option>
+                        {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                      </select>
                     </div>
-                  ))}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
+                      <select value={studentSection} onChange={e => setStudentSection(e.target.value)}
+                        disabled={!studentClass}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200">
+                        <option value="">Select Section</option>
+                        {SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Student Name *</label>
+                      {studentsLoading ? (
+                        <div className="w-full px-3 py-2 border border-gray-300 rounded-lg text-gray-400 bg-gray-50">Loading...</div>
+                      ) : (
+                        <select value={studentName} onChange={e => setStudentName(e.target.value)}
+                          disabled={!studentClass || !studentSection}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200">
+                          <option value="">Select Student</option>
+                          {studentsList.map(s => <option key={s.sid} value={s.name}>{s.name}</option>)}
+                          {studentsList.length === 0 && studentClass && studentSection && (
+                            <option disabled>No students found — contact admin</option>
+                          )}
+                        </select>
+                      )}
+                    </div>
+                  </div>
                 </div>
-              )}
 
-              {/* Add Teacher Form */}
-              <ParentTeacherSelector
-                teacherData={teacherData}
-                phases={phases}
-                bookings={bookings}
-                getBookingKey={getBookingKey}
-                getAvailableSlotsForTeacher={getAvailableSlotsForTeacher}
-                onAddTeacher={handleAddTeacher}
-                studentName={studentName}
-                studentClass={studentClass}
-                studentSection={studentSection}
-                selectedTeachers={selectedTeachers}
-              />
-
-              {/* Submit Button */}
-              <button
-                onClick={validateAndSubmit}
-                disabled={selectedTeachers.length === 0}
-                className="w-full mt-6 bg-indigo-600 text-white py-4 rounded-lg font-bold text-lg hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-              >
-                Submit All Bookings ({selectedTeachers.length})
-              </button>
-            </div>
+                {/* Teacher Selection */}
+                <div className="p-6">
+                  <h3 className="text-lg font-bold mb-4">Select Teachers to Meet</h3>
+                  {selectedTeachers.length > 0 && (
+                    <div className="mb-6 bg-green-50 border-2 border-green-200 rounded-lg p-4">
+                      <h4 className="font-semibold text-green-800 mb-3">Selected Bookings:</h4>
+                      {selectedTeachers.map((sel, idx) => (
+                        <div key={idx} className="flex items-center justify-between bg-white rounded p-3 mb-2">
+                          <div>
+                            <p className="font-semibold">{sel.teacher}</p>
+                            <p className="text-sm text-gray-600">Grade {sel.grade} • {phases[sel.phase].name} • Slot {sel.slot} ({phases[sel.phase].timings[sel.slot - 1]})</p>
+                          </div>
+                          <button onClick={() => handleRemoveTeacher(idx)} className="text-red-600 hover:text-red-800 font-semibold">Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <ParentTeacherSelector
+                    teacherData={teacherData}
+                    phases={phases}
+                    bookings={bookings}
+                    getBookingKey={getBookingKey}
+                    getAvailableSlotsForTeacher={getAvailableSlotsForTeacher}
+                    onAddTeacher={handleAddTeacher}
+                    studentName={studentName}
+                    studentClass={studentClass}
+                    studentSection={studentSection}
+                    selectedTeachers={selectedTeachers}
+                    grades={GRADES}
+                  />
+                  <button onClick={validateAndSubmit} disabled={selectedTeachers.length === 0 || !studentName}
+                    className="w-full mt-6 bg-indigo-600 text-white py-4 rounded-lg font-bold text-lg hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    Submit All Bookings ({selectedTeachers.length})
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -1684,39 +1244,32 @@ const PTMScheduler = () => {
     );
   }
 
-  // TEACHER VIEW
+  // ─── TEACHER VIEW ─────────────────────────────────────────────────────────
   if (userRole === 'teacher') {
-    const teacherGrades = getTeacherGrades(loggedInTeacher);
     const isOnBreak = teacherStatus[loggedInTeacher]?.isOnBreak || false;
-
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4">
+        {showChangePassword && <ChangePasswordModal />}
         <div className="max-w-7xl mx-auto">
           <div className="bg-white rounded-lg shadow-2xl overflow-hidden">
-            {/* Header */}
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div>
                   <h1 className="text-2xl font-bold">Welcome, {loggedInTeacher}</h1>
-                  <p className="text-sm opacity-90">Your PTM Schedule</p>
+                  <p className="text-sm opacity-90">Your PTM Schedule • {ptmDate}</p>
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={toggleBreakStatus}
-                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold ${
-                      isOnBreak
-                        ? 'bg-orange-500 text-white hover:bg-orange-600'
-                        : 'bg-yellow-400 text-gray-800 hover:bg-yellow-500'
-                    }`}
-                  >
-                    <Coffee size={18} />
-                    {isOnBreak ? 'End Break' : 'Take Break'}
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={toggleBreakStatus}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold ${isOnBreak ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-yellow-400 text-gray-800 hover:bg-yellow-500'}`}>
+                    <Coffee size={18} /> {isOnBreak ? 'End Break' : 'Take Break'}
                   </button>
-                  <button
-                    onClick={handleLogout}
-                    className="bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50"
-                  >
-                    Logout
+                  <button onClick={() => setShowChangePassword(true)}
+                    className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50">
+                    <Key size={18} /> Change Password
+                  </button>
+                  <button onClick={handleLogout}
+                    className="flex items-center gap-2 bg-red-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-600">
+                    <LogOut size={18} /> Logout
                   </button>
                 </div>
               </div>
@@ -1728,116 +1281,43 @@ const PTMScheduler = () => {
               </div>
             )}
 
-            {/* Phase tabs */}
             <div className="flex gap-1 p-2 bg-gray-50 border-b">
               {Object.entries(phases).map(([phaseKey, phaseInfo]) => (
-                <button
-                  key={phaseKey}
-                  onClick={() => setActivePhase(phaseKey)}
-                  className={`flex-1 py-2 px-3 rounded font-semibold text-sm ${
-                    activePhase === phaseKey ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
-                  }`}
-                >
+                <button key={phaseKey} onClick={() => setActivePhase(phaseKey)}
+                  className={`flex-1 py-2 px-3 rounded font-semibold text-sm ${activePhase === phaseKey ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
                   <div>{phaseInfo.name}</div>
                   <div className="text-xs opacity-80">{phaseInfo.time}</div>
-                  <div className="text-xs opacity-70">{phaseInfo.rollNumbers}</div>
                 </button>
               ))}
             </div>
 
-            {/* Teacher Schedule Grid */}
             <div className="p-6">
-              <h2 className="text-xl font-bold mb-4">
-                All Appointments - {phases[activePhase].name}
-              </h2>
+              <h2 className="text-xl font-bold mb-4">All Appointments - {phases[activePhase].name}</h2>
               <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
                 {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => {
-                  // Check ALL grades for this teacher at this phase/slot
-                  let booking = null;
-                  let bookingKey = null;
-                  
-                  for (const grade of sheets) {
+                  let booking = null, bookingKey = null;
+                  for (const grade of GRADES) {
                     const key = getBookingKey(grade, loggedInTeacher, activePhase, slot);
-                    if (bookings[key]) {
-                      booking = bookings[key];
-                      bookingKey = key;
-                      break; // Found booking, stop searching
-                    }
+                    if (bookings[key]) { booking = bookings[key]; bookingKey = key; break; }
                   }
-                  
                   return (
-                    <div
-                      key={slot}
-                      className={`p-3 rounded-lg border-2 ${
-                        booking
-                          ? booking.status === 'done'
-                            ? 'bg-green-100 border-green-500'
-                            : booking.status === 'not_met'
-                            ? 'bg-orange-100 border-orange-500'
-                            : booking.status === 'met_later'
-                            ? 'bg-yellow-100 border-yellow-500'
-                            : 'bg-blue-50 border-blue-500'
-                          : 'bg-gray-50 border-gray-300'
-                      }`}
-                    >
+                    <div key={slot} className={`p-3 rounded-lg border-2 ${booking ? (booking.status === 'done' ? 'bg-green-100 border-green-500' : booking.status === 'not_met' ? 'bg-orange-100 border-orange-500' : booking.status === 'met_later' ? 'bg-yellow-100 border-yellow-500' : 'bg-blue-50 border-blue-500') : 'bg-gray-50 border-gray-300'}`}>
                       <div className="font-bold text-sm mb-1">Slot {slot}</div>
                       <div className="text-xs text-gray-600 mb-2">{phases[activePhase].timings[slot - 1]}</div>
                       {booking ? (
                         <div>
                           <div className="text-sm font-medium mb-1">{booking.studentName}</div>
-                          <div className="text-xs text-gray-600 mb-2">
-                            Grade {booking.studentClass}-{booking.studentSection}
+                          <div className="text-xs text-gray-600 mb-2">Gr {booking.studentClass}-{booking.studentSection}</div>
+                          <div className="flex flex-col gap-1">
+                            {['done', 'not_met', 'met_later'].map(status => (
+                              <button key={status} onClick={() => updateBookingStatus(bookingKey, status)}
+                                className={`text-white text-xs px-2 py-1 rounded ${booking.status === status ? (status === 'done' ? 'bg-green-700 font-bold' : status === 'not_met' ? 'bg-orange-700 font-bold' : 'bg-yellow-700 font-bold') : (status === 'done' ? 'bg-green-600 hover:bg-green-700' : status === 'not_met' ? 'bg-orange-600 hover:bg-orange-700' : 'bg-yellow-600 hover:bg-yellow-700')}`}>
+                                {status === 'done' ? '✓ Done' : status === 'not_met' ? '✗ Not Met' : '⏰ Met Later'}
+                              </button>
+                            ))}
                           </div>
-                          {/* Always show buttons - teachers can update status anytime */}
-                          <div className="flex flex-col gap-1 mb-2">
-                            <button
-                              onClick={() => updateBookingStatus(bookingKey, 'done')}
-                              className={`text-white text-xs px-2 py-1 rounded ${
-                                booking.status === 'done' 
-                                  ? 'bg-green-700 font-bold' 
-                                  : 'bg-green-600 hover:bg-green-700'
-                              }`}
-                            >
-                              ✓ Done
-                            </button>
-                            <button
-                              onClick={() => updateBookingStatus(bookingKey, 'not_met')}
-                              className={`text-white text-xs px-2 py-1 rounded ${
-                                booking.status === 'not_met' 
-                                  ? 'bg-orange-700 font-bold' 
-                                  : 'bg-orange-600 hover:bg-orange-700'
-                              }`}
-                            >
-                              ✗ Not Met
-                            </button>
-                            <button
-                              onClick={() => updateBookingStatus(bookingKey, 'met_later')}
-                              className={`text-white text-xs px-2 py-1 rounded ${
-                                booking.status === 'met_later' 
-                                  ? 'bg-yellow-700 font-bold' 
-                                  : 'bg-yellow-600 hover:bg-yellow-700'
-                              }`}
-                            >
-                              ⏰ Met Later
-                            </button>
-                          </div>
-                          {/* Show current status as text */}
-                          {booking.status === 'done' && (
-                            <div className="text-green-700 text-xs font-semibold">Current: ✓ Completed</div>
-                          )}
-                          {booking.status === 'not_met' && (
-                            <div className="text-orange-700 text-xs font-semibold">Current: ✗ Not Met</div>
-                          )}
-                          {booking.status === 'met_later' && (
-                            <div className="text-yellow-700 text-xs font-semibold">Current: ⏰ Met Later</div>
-                          )}
-                          {booking.status === 'pending' && (
-                            <div className="text-blue-700 text-xs font-semibold">Current: Pending</div>
-                          )}
                         </div>
-                      ) : (
-                        <div className="text-xs text-gray-400 italic">Available</div>
-                      )}
+                      ) : <div className="text-xs text-gray-400 italic">Available</div>}
                     </div>
                   );
                 })}
@@ -1849,78 +1329,55 @@ const PTMScheduler = () => {
     );
   }
 
-  // ADMIN VIEW
+  // ─── ADMIN VIEW ───────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4">
       <div className="max-w-7xl mx-auto">
         <div className="bg-white rounded-lg shadow-2xl overflow-hidden">
-          {/* Header */}
+          {/* Admin Header */}
           <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
-                <h1 className="text-2xl font-bold">PTM Scheduler - Admin View</h1>
-                <p className="text-sm opacity-90">Full Schedule Management</p>
+                <h1 className="text-2xl font-bold">PTM Scheduler — Admin</h1>
+                <p className="text-sm opacity-90">{ptmDate}</p>
               </div>
               <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setShowDateEditor(true)}
-                  className="flex items-center gap-2 bg-blue-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-600"
-                >
-                  <Calendar size={18} />
-                  PTM Date: {ptmDate}
+                <button onClick={() => setShowDateEditor(true)}
+                  className="flex items-center gap-2 bg-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-blue-600 text-sm">
+                  <Calendar size={16} /> Set Date
                 </button>
-                <button
-                  onClick={() => setShowTeacherUpload(true)}
-                  className="flex items-center gap-2 bg-purple-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-600"
-                >
-                  <Upload size={18} />
-                  Upload Teachers
+                <button onClick={() => setShowTeacherUpload(true)}
+                  className="flex items-center gap-2 bg-purple-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-purple-600 text-sm">
+                  <Upload size={16} /> Teachers
                 </button>
-                <button
-                  onClick={() => setSlideshowMode(!slideshowMode)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg font-semibold ${
-                    slideshowMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-yellow-400 text-gray-800 hover:bg-yellow-500'
-                  }`}
-                >
-                  {slideshowMode ? <Pause size={18} /> : <Play size={18} />}
+                <button onClick={() => { setShowTeacherAccounts(true); setUploadedTeacherAccounts(null); setTeacherAccountsResults(null); }}
+                  className="flex items-center gap-2 bg-indigo-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-indigo-600 text-sm">
+                  <User size={16} /> Teacher Accounts
+                </button>
+                <button onClick={() => setShowStudentUpload(true)}
+                  className="flex items-center gap-2 bg-teal-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-teal-600 text-sm">
+                  <Upload size={16} /> Students
+                </button>
+                <button onClick={() => setSlideshowMode(!slideshowMode)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg font-semibold text-sm ${slideshowMode ? 'bg-red-500 text-white hover:bg-red-600' : 'bg-yellow-400 text-gray-800 hover:bg-yellow-500'}`}>
+                  {slideshowMode ? <Pause size={16} /> : <Play size={16} />}
                   {slideshowMode ? 'Stop Display' : 'Display Mode'}
                 </button>
-                <button
-                  onClick={exportToCSV}
-                  className="flex items-center gap-2 bg-white text-indigo-600 px-4 py-2 rounded-lg font-semibold hover:bg-indigo-50"
-                >
-                  <Download size={18} />
-                  Export
+                <button onClick={exportToCSV}
+                  className="flex items-center gap-2 bg-white text-indigo-600 px-3 py-2 rounded-lg font-semibold hover:bg-indigo-50 text-sm">
+                  <Download size={16} /> Export
                 </button>
-                <button
-                  onClick={cleanupConflictingBookings}
-                  className="flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-orange-700"
-                >
-                  🧹 Fix Conflicts
-                </button>
-                <button
-                  onClick={normalizeOldData}
-                  className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-blue-700"
-                >
-                  🔧 Normalize Data
-                </button>
-                <button
-                  onClick={diagnoseBookings}
-                  className="flex items-center gap-2 bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700"
-                >
-                  🔍 Diagnose Bookings
-                </button>
-                <button
-                  onClick={clearAllBookings}
-                  className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-red-700"
-                >
-                  Clear All
-                </button>
-                <button
-                  onClick={handleLogout}
-                  className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-600"
-                >
-                  Logout
+                <button onClick={cleanupConflictingBookings}
+                  className="bg-orange-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-orange-700 text-sm">🧹 Fix Conflicts</button>
+                <button onClick={normalizeOldData}
+                  className="bg-blue-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-blue-700 text-sm">🔧 Normalize</button>
+                <button onClick={diagnoseBookings}
+                  className="bg-purple-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-purple-700 text-sm">🔍 Diagnose</button>
+                <button onClick={clearAllBookings}
+                  className="bg-red-600 text-white px-3 py-2 rounded-lg font-semibold hover:bg-red-700 text-sm">Clear All</button>
+                <button onClick={handleLogout}
+                  className="flex items-center gap-2 bg-green-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-green-600 text-sm">
+                  <LogOut size={16} /> Logout
                 </button>
               </div>
             </div>
@@ -1928,16 +1385,11 @@ const PTMScheduler = () => {
 
           {/* Grade tabs */}
           <div className="flex gap-1 p-2 bg-gray-100 border-b overflow-x-auto">
-            {sheets.map(grade => {
+            {GRADES.map(grade => {
               const count = Object.values(bookings).filter(b => b.grade === grade).length;
               return (
-                <button
-                  key={grade}
-                  onClick={() => setActiveSheet(grade)}
-                  className={`px-4 py-2 font-semibold rounded-t whitespace-nowrap ${
-                    activeSheet === grade ? 'bg-white text-indigo-600 shadow' : 'bg-gray-200 text-gray-600'
-                  }`}
-                >
+                <button key={grade} onClick={() => setActiveSheet(grade)}
+                  className={`px-4 py-2 font-semibold rounded-t whitespace-nowrap ${activeSheet === grade ? 'bg-white text-indigo-600 shadow' : 'bg-gray-200 text-gray-600'}`}>
                   {grade}
                   {count > 0 && <span className="ml-1 bg-indigo-600 text-white px-1.5 py-0.5 rounded-full text-xs">{count}</span>}
                 </button>
@@ -1948,35 +1400,25 @@ const PTMScheduler = () => {
           {/* Phase tabs */}
           <div className="flex gap-1 p-2 bg-gray-50 border-b">
             {Object.entries(phases).map(([phaseKey, phaseInfo]) => (
-              <button
-                key={phaseKey}
-                onClick={() => setActivePhase(phaseKey)}
-                className={`flex-1 py-2 px-3 rounded font-semibold text-sm ${
-                  activePhase === phaseKey ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'
-                }`}
-              >
+              <button key={phaseKey} onClick={() => setActivePhase(phaseKey)}
+                className={`flex-1 py-2 px-3 rounded font-semibold text-sm ${activePhase === phaseKey ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
                 <div>{phaseInfo.name}</div>
                 <div className="text-xs opacity-80">{phaseInfo.time}</div>
-                <div className="text-xs opacity-70">{phaseInfo.rollNumbers}</div>
               </button>
             ))}
           </div>
 
           {/* Admin Grid */}
           <div className="p-4 overflow-x-auto">
-            {/* Pagination indicator for slideshow mode */}
             {slideshowMode && (() => {
               const teachers = teacherData[activeSheet] || [];
               const totalPages = Math.ceil(teachers.length / TEACHERS_PER_PAGE);
               return totalPages > 1 ? (
                 <div className="mb-3 text-center bg-indigo-100 py-2 rounded-lg">
-                  <span className="text-indigo-800 font-semibold text-lg">
-                    Page {currentSlidePage + 1} of {totalPages}
-                  </span>
+                  <span className="text-indigo-800 font-semibold text-lg">Page {currentSlidePage + 1} of {totalPages}</span>
                 </div>
               ) : null;
             })()}
-            
             <table className="w-full border-collapse">
               <thead>
                 <tr>
@@ -1992,54 +1434,26 @@ const PTMScheduler = () => {
               <tbody>
                 {(() => {
                   const teachers = teacherData[activeSheet] || [];
-                  
-                  // In slideshow mode, paginate teachers
                   const displayTeachers = slideshowMode
-                    ? teachers.slice(
-                        currentSlidePage * TEACHERS_PER_PAGE,
-                        (currentSlidePage + 1) * TEACHERS_PER_PAGE
-                      )
+                    ? teachers.slice(currentSlidePage * TEACHERS_PER_PAGE, (currentSlidePage + 1) * TEACHERS_PER_PAGE)
                     : teachers;
-                  
                   return displayTeachers.map(teacher => {
-                    const isOnBreak = teacherStatus[teacher]?.isOnBreak || false;
-                    
+                    const onBreak = teacherStatus[teacher]?.isOnBreak || false;
                     return (
-                      <tr key={teacher} className={isOnBreak ? 'bg-yellow-100' : ''}>
+                      <tr key={teacher} className={onBreak ? 'bg-yellow-100' : ''}>
                         <td className="border p-2 font-medium sticky left-0 bg-white z-10">
-                          {teacher}
-                          {isOnBreak && <span className="ml-2 text-yellow-600 text-xs">☕ Break</span>}
+                          {teacher}{onBreak && <span className="ml-2 text-yellow-600 text-xs">☕ Break</span>}
                         </td>
                         {Array.from({ length: phases[activePhase].slots }, (_, i) => i + 1).map(slot => {
                           const key = getBookingKey(activeSheet, teacher, activePhase, slot);
                           const booking = bookings[key];
-                          
                           return (
-                            <td
-                              key={slot}
-                              className={`border p-1 text-xs text-center ${
-                                booking
-                                  ? booking.status === 'done'
-                                    ? 'bg-green-200 font-semibold'
-                                    : booking.status === 'not_met'
-                                    ? 'bg-orange-200 font-semibold'
-                                    : booking.status === 'met_later'
-                                    ? 'bg-yellow-200 font-semibold'
-                                    : 'bg-blue-100'
-                                  : 'bg-gray-50'
-                              }`}
-                            >
+                            <td key={slot} className={`border p-1 text-xs text-center ${booking ? (booking.status === 'done' ? 'bg-green-200 font-semibold' : booking.status === 'not_met' ? 'bg-orange-200 font-semibold' : booking.status === 'met_later' ? 'bg-yellow-200 font-semibold' : 'bg-blue-100') : 'bg-gray-50'}`}>
                               {booking ? (
-                                <div className="text-xs">
-                                  {booking.studentName}
-                                  <br />
-                                  <span className="text-gray-600">
-                                    {booking.studentClass}-{booking.studentSection}
-                                  </span>
+                                <div className="text-xs">{booking.studentName}<br />
+                                  <span className="text-gray-600">{booking.studentClass}-{booking.studentSection}</span>
                                 </div>
-                              ) : (
-                                '-'
-                              )}
+                              ) : '-'}
                             </td>
                           );
                         })}
@@ -2053,66 +1467,26 @@ const PTMScheduler = () => {
 
           {/* Legend */}
           <div className="p-4 bg-gray-50 border-t flex gap-4 text-sm flex-wrap">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-blue-100 border-2 border-blue-500 rounded"></div>
-              <span>Pending</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-green-200 border-2 border-green-500 rounded"></div>
-              <span>Done</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-orange-200 border-2 border-orange-500 rounded"></div>
-              <span>Not Met</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-yellow-200 border-2 border-yellow-500 rounded"></div>
-              <span>Met Later</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
-              <span>On Break</span>
-            </div>
+            {[['bg-blue-100 border-blue-500', 'Pending'], ['bg-green-200 border-green-500', 'Done'], ['bg-orange-200 border-orange-500', 'Not Met'], ['bg-yellow-200 border-yellow-500', 'Met Later'], ['bg-yellow-100 border-yellow-400', 'On Break']].map(([cls, label]) => (
+              <div key={label} className="flex items-center gap-2">
+                <div className={`w-6 h-6 ${cls} border-2 rounded`}></div><span>{label}</span>
+              </div>
+            ))}
           </div>
 
-          {/* PTM Date Editor Modal */}
+          {/* PTM Date Editor */}
           {showDateEditor && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-lg p-8 max-w-md w-full">
                 <h2 className="text-2xl font-bold mb-4 text-indigo-700">📅 Set PTM Date</h2>
-                
-                <div className="mb-6">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">PTM Date</label>
-                  <input
-                    type="text"
-                    value={ptmDate}
-                    onChange={(e) => setPtmDate(e.target.value)}
-                    placeholder="e.g., December 24, 2025"
-                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500"
-                  />
-                  <p className="text-xs text-gray-500 mt-2">
-                    This will be displayed on the parent tracking page
-                  </p>
-                </div>
-                
+                <input type="text" value={ptmDate} onChange={e => setPtmDate(e.target.value)}
+                  placeholder="e.g., 24 December 2025"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 mb-6" />
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => {
-                      setShowDateEditor(false);
-                      alert('PTM date updated to: ' + ptmDate);
-                    }}
-                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700"
-                  >
-                    Save Date
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowDateEditor(false);
-                    }}
-                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold hover:bg-gray-400"
-                  >
-                    Cancel
-                  </button>
+                  <button onClick={() => setShowDateEditor(false)}
+                    className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-semibold">Save</button>
+                  <button onClick={() => setShowDateEditor(false)}
+                    className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">Cancel</button>
                 </div>
               </div>
             </div>
@@ -2123,224 +1497,395 @@ const PTMScheduler = () => {
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
               <div className="bg-white rounded-lg p-8 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
                 <h2 className="text-2xl font-bold mb-4 text-indigo-700">Upload Teacher List</h2>
-                
                 {!uploadedTeachers ? (
                   <div>
                     <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
                       <p className="text-blue-800 mb-2"><strong>📋 Instructions:</strong></p>
                       <ul className="text-sm text-blue-700 list-disc list-inside space-y-1">
-                        <li>Excel file should have columns: <strong>IX, X, XI, XII</strong></li>
-                        <li>Each column contains teacher names for that grade</li>
-                        <li>First row should be the header (grade names)</li>
-                        <li>Teacher names from row 2 onwards</li>
+                        <li>Excel columns should be: <strong>VI, VII, VIII, IX, X, XI, XII</strong></li>
+                        <li>Each column lists teacher names for that grade</li>
+                        <li>Row 1 = headers, Row 2 onwards = teacher names</li>
                       </ul>
                     </div>
-
-                    <input
-                      type="file"
-                      accept=".xlsx,.xls"
-                      onChange={handleExcelUpload}
-                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4"
-                    />
-
-                    <div className="mt-6 flex gap-3">
-                      <button
-                        onClick={() => setShowTeacherUpload(false)}
-                        className="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400"
-                      >
-                        Cancel
-                      </button>
-                    </div>
+                    <input type="file" accept=".xlsx,.xls" onChange={handleTeacherExcelUpload}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4" />
+                    <button onClick={() => setShowTeacherUpload(false)} className="mt-4 px-6 py-2 bg-gray-300 text-gray-700 rounded-lg">Cancel</button>
                   </div>
                 ) : (
                   <div>
                     <div className="bg-green-50 border-l-4 border-green-400 p-4 mb-6">
-                      <p className="text-green-800 font-semibold mb-2">✅ File parsed successfully!</p>
-                      <p className="text-sm text-green-700">Review the teacher list below and click "Save" to update.</p>
+                      <p className="text-green-800 font-semibold">✅ File parsed! Review and save.</p>
                     </div>
-
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                      {['IX', 'X', 'XI', 'XII'].map(grade => (
+                      {GRADES.map(grade => (
                         <div key={grade} className="border rounded-lg p-4">
-                          <h3 className="font-bold text-lg text-indigo-700 mb-2">Grade {grade}</h3>
+                          <h3 className="font-bold text-lg text-indigo-700 mb-1">Grade {grade}</h3>
                           <p className="text-sm text-gray-600 mb-2">{uploadedTeachers[grade].length} teachers</p>
                           <div className="max-h-48 overflow-y-auto text-xs">
-                            {uploadedTeachers[grade].map((teacher, idx) => (
-                              <div key={idx} className="py-1 border-b last:border-b-0">{teacher}</div>
-                            ))}
+                            {uploadedTeachers[grade].map((t, i) => <div key={i} className="py-1 border-b last:border-b-0">{t}</div>)}
                           </div>
                         </div>
                       ))}
                     </div>
-
                     <div className="flex gap-3">
-                      <button
-                        onClick={saveUploadedTeachers}
-                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-bold hover:bg-green-700"
-                      >
-                        ✓ Save Teacher List
-                      </button>
-                      <button
-                        onClick={() => {
-                          setUploadedTeachers(null);
-                          setShowTeacherUpload(false);
-                        }}
-                        className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg font-semibold hover:bg-gray-400"
-                      >
-                        Cancel
-                      </button>
+                      <button onClick={saveUploadedTeachers} className="px-6 py-3 bg-green-600 text-white rounded-lg font-bold">✓ Save</button>
+                      <button onClick={() => { setUploadedTeachers(null); setShowTeacherUpload(false); }} className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg">Cancel</button>
                     </div>
                   </div>
                 )}
               </div>
             </div>
           )}
-        </div>
-      </div>
-    </div>
-  );
-};
 
-// Parent Teacher Selector Component
-const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentName, studentClass, studentSection, selectedTeachers }) => {
+          {/* Student Upload Modal */}
+          {showStudentUpload && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-2xl font-bold mb-4 text-teal-700">📥 Upload Student List</h2>
+
+                {!uploadedStudents ? (
+                  <div>
+                    <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+                      <p className="text-blue-800 mb-2"><strong>📋 Instructions:</strong></p>
+                      <ul className="text-sm text-blue-700 list-disc list-inside space-y-1">
+                        <li>Upload one Excel file per class section</li>
+                        <li>Columns expected: <strong>Serial Number, SID Number, Name of Student</strong></li>
+                        <li>This will replace the existing list for the selected grade + section</li>
+                      </ul>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 mb-6">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Grade *</label>
+                        <select value={studentUploadGrade} onChange={e => setStudentUploadGrade(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500">
+                          <option value="">Select Grade</option>
+                          {GRADES.map(g => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">Section *</label>
+                        <select value={studentUploadSection} onChange={e => setStudentUploadSection(e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-500">
+                          <option value="">Select Section</option>
+                          {SECTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    <input type="file" accept=".xlsx,.xls"
+                      disabled={!studentUploadGrade || !studentUploadSection}
+                      onChange={handleStudentExcelUpload}
+                      className="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4 disabled:opacity-50" />
+
+                    <button onClick={() => { setShowStudentUpload(false); setStudentUploadGrade(''); setStudentUploadSection(''); setUploadedStudents(null); }}
+                      className="mt-4 px-6 py-2 bg-gray-300 text-gray-700 rounded-lg">Cancel</button>
+                  </div>
+                ) : (
+                  <div>
+                    <div className="bg-green-50 border-l-4 border-green-400 p-4 mb-4">
+                      <p className="text-green-800 font-semibold">✅ {uploadedStudents.length} students parsed for Grade {studentUploadGrade}-{studentUploadSection}</p>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto border rounded-lg mb-6">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-100 sticky top-0">
+                          <tr>
+                            <th className="p-2 text-left">#</th>
+                            <th className="p-2 text-left">SID</th>
+                            <th className="p-2 text-left">Name</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {uploadedStudents.map((s, i) => (
+                            <tr key={i} className="border-t hover:bg-gray-50">
+                              <td className="p-2">{s.serial}</td>
+                              <td className="p-2 text-gray-500">{s.sid}</td>
+                              <td className="p-2 font-medium">{s.name}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex gap-3">
+                      <button onClick={saveUploadedStudents} disabled={studentUploadLoading}
+                        className="flex-1 px-6 py-3 bg-teal-600 text-white rounded-lg font-bold hover:bg-teal-700 disabled:bg-gray-400">
+                        {studentUploadLoading ? 'Saving...' : `✓ Save ${uploadedStudents.length} Students`}
+                      </button>
+                      <button onClick={() => setUploadedStudents(null)}
+                        className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg">Back</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {/* Teacher Accounts Upload Modal */}
+          {showTeacherAccounts && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+                <h2 className="text-2xl font-bold mb-2 text-indigo-700 flex items-center gap-2">
+                  <User size={24} /> Teacher Login Accounts
+                </h2>
+                <p className="text-gray-500 text-sm mb-6">
+                  Upload an Excel file to create Supabase login accounts for teachers. Default password: <code className="bg-gray-100 px-2 py-0.5 rounded font-mono">SBSptm@1234</code>
+                </p>
+
+                {/* Results screen */}
+                {teacherAccountsResults && (
+                  <div className="mb-6">
+                    <div className="grid grid-cols-3 gap-4 mb-6">
+                      <div className="bg-green-50 border-2 border-green-300 rounded-lg p-4 text-center">
+                        <div className="text-3xl font-bold text-green-700">{teacherAccountsResults.created.length}</div>
+                        <div className="text-green-600 font-semibold">Created</div>
+                      </div>
+                      <div className="bg-blue-50 border-2 border-blue-300 rounded-lg p-4 text-center">
+                        <div className="text-3xl font-bold text-blue-700">{teacherAccountsResults.updated.length}</div>
+                        <div className="text-blue-600 font-semibold">Updated</div>
+                      </div>
+                      <div className="bg-red-50 border-2 border-red-300 rounded-lg p-4 text-center">
+                        <div className="text-3xl font-bold text-red-700">{teacherAccountsResults.failed.length}</div>
+                        <div className="text-red-600 font-semibold">Failed</div>
+                      </div>
+                    </div>
+
+                    {teacherAccountsResults.created.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-bold text-green-700 mb-2">✅ Created ({teacherAccountsResults.created.length})</h4>
+                        <div className="max-h-32 overflow-y-auto bg-green-50 rounded-lg p-3 text-sm">
+                          {teacherAccountsResults.created.map((t, i) => (
+                            <div key={i} className="py-1 border-b border-green-200 last:border-0">{t.name} — {t.email}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {teacherAccountsResults.updated.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-bold text-blue-700 mb-2">🔄 Already existed, email linked ({teacherAccountsResults.updated.length})</h4>
+                        <div className="max-h-32 overflow-y-auto bg-blue-50 rounded-lg p-3 text-sm">
+                          {teacherAccountsResults.updated.map((t, i) => (
+                            <div key={i} className="py-1 border-b border-blue-200 last:border-0">{t.name} — {t.email}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {teacherAccountsResults.failed.length > 0 && (
+                      <div className="mb-4">
+                        <h4 className="font-bold text-red-700 mb-2">❌ Failed ({teacherAccountsResults.failed.length})</h4>
+                        <div className="max-h-32 overflow-y-auto bg-red-50 rounded-lg p-3 text-sm">
+                          {teacherAccountsResults.failed.map((t, i) => (
+                            <div key={i} className="py-1 border-b border-red-200 last:border-0">
+                              <span className="font-medium">{t.name}</span> — {t.email}
+                              <br /><span className="text-red-500 text-xs">{t.reason}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex gap-3 mt-4">
+                      <button onClick={() => { setUploadedTeacherAccounts(null); setTeacherAccountsResults(null); }}
+                        className="px-6 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700">
+                        Upload Another File
+                      </button>
+                      <button onClick={() => { setShowTeacherAccounts(false); setUploadedTeacherAccounts(null); setTeacherAccountsResults(null); }}
+                        className="px-6 py-2 bg-gray-300 text-gray-700 rounded-lg font-semibold">
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Upload / preview screen */}
+                {!teacherAccountsResults && (
+                  <>
+                    {!uploadedTeacherAccounts ? (
+                      <div>
+                        <div className="bg-blue-50 border-l-4 border-blue-400 p-4 mb-6">
+                          <p className="text-blue-800 font-semibold mb-2">📋 Excel Format Required:</p>
+                          <div className="overflow-x-auto">
+                            <table className="text-sm text-blue-700 border-collapse">
+                              <thead>
+                                <tr>
+                                  <th className="border border-blue-300 px-3 py-1 bg-blue-100">Teacher Name</th>
+                                  <th className="border border-blue-300 px-3 py-1 bg-blue-100">Grade</th>
+                                  <th className="border border-blue-300 px-3 py-1 bg-blue-100">Email</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td className="border border-blue-200 px-3 py-1">ARPAN KRISHNA DEB</td>
+                                  <td className="border border-blue-200 px-3 py-1">XII</td>
+                                  <td className="border border-blue-200 px-3 py-1">arpan.deb@sbs-school.org</td>
+                                </tr>
+                                <tr>
+                                  <td className="border border-blue-200 px-3 py-1">MEERA SHARMA</td>
+                                  <td className="border border-blue-200 px-3 py-1">X</td>
+                                  <td className="border border-blue-200 px-3 py-1">meera.sharma@sbs-school.org</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                          <ul className="text-sm text-blue-700 list-disc list-inside mt-3 space-y-1">
+                            <li>Teacher names must be in <strong>UPPERCASE</strong> (must match exactly what's in the teachers table)</li>
+                            <li>Grade column is optional if teacher already exists in DB</li>
+                            <li>All teachers get initial password: <strong>SBSptm@1234</strong></li>
+                            <li>Teachers can change their password after first login</li>
+                          </ul>
+                        </div>
+
+                        <input type="file" accept=".xlsx,.xls" onChange={handleTeacherAccountsExcel}
+                          className="block w-full text-sm text-gray-500 file:mr-4 file:py-3 file:px-6 file:rounded-lg file:border-0 file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-4" />
+
+                        <button onClick={() => { setShowTeacherAccounts(false); }}
+                          className="mt-4 px-6 py-2 bg-gray-300 text-gray-700 rounded-lg">Cancel</button>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="bg-green-50 border-l-4 border-green-400 p-4 mb-4">
+                          <p className="text-green-800 font-semibold">✅ {uploadedTeacherAccounts.length} teachers parsed. Review and confirm.</p>
+                        </div>
+
+                        <div className="max-h-64 overflow-y-auto border rounded-lg mb-6">
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-100 sticky top-0">
+                              <tr>
+                                <th className="p-2 text-left">#</th>
+                                <th className="p-2 text-left">Teacher Name</th>
+                                <th className="p-2 text-left">Grade</th>
+                                <th className="p-2 text-left">Email</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {uploadedTeacherAccounts.map((t, i) => (
+                                <tr key={i} className="border-t hover:bg-gray-50">
+                                  <td className="p-2 text-gray-400">{i + 1}</td>
+                                  <td className="p-2 font-medium">{t.name}</td>
+                                  <td className="p-2 text-gray-600">{t.grade || '—'}</td>
+                                  <td className="p-2 text-blue-600">{t.email}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-6">
+                          <p className="text-yellow-800 text-sm">
+                            <strong>⚠️ This will:</strong> Create Supabase Auth accounts for each teacher with password <code className="bg-yellow-100 px-1 rounded">SBSptm@1234</code>.
+                            If an account already exists, it will just link the email. This may take a minute for large lists.
+                          </p>
+                        </div>
+
+                        <div className="flex gap-3">
+                          <button onClick={saveTeacherAccounts} disabled={teacherAccountsLoading}
+                            className="flex-1 px-6 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 disabled:bg-gray-400">
+                            {teacherAccountsLoading
+                              ? `Creating accounts... (this may take a while)`
+                              : `✓ Create ${uploadedTeacherAccounts.length} Teacher Accounts`}
+                          </button>
+                          <button onClick={() => setUploadedTeacherAccounts(null)}
+                            className="px-6 py-3 bg-gray-300 text-gray-700 rounded-lg">Back</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentName, studentClass, studentSection, selectedTeachers, grades }) => {
+  const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState('');
   const [selectedPhase, setSelectedPhase] = useState('');
   const [selectedSlot, setSelectedSlot] = useState('');
   const [availableSlots, setAvailableSlots] = useState([]);
   const [loadingSlots, setLoadingSlots] = useState(false);
 
-  // Get list of already booked teachers to prevent duplicates
   const bookedTeachers = selectedTeachers.map(st => st.teacher);
-  
-  // Filter out already selected teachers
-  const availableTeachers = (teacherData[studentClass] || []).filter(
-    teacher => !bookedTeachers.includes(teacher)
-  );
 
-  // Fetch available slots when teacher and phase are selected
+  // Use studentClass as default grade but allow override
+  const effectiveGrade = selectedGrade || studentClass;
+  const availableTeachers = (teacherData[effectiveGrade] || []).filter(t => !bookedTeachers.includes(t));
+
   useEffect(() => {
     const fetchSlots = async () => {
-      if (studentName && studentClass && studentSection && selectedTeacher && selectedPhase) {
+      if (studentName && studentClass && studentSection && selectedTeacher && selectedPhase && effectiveGrade) {
         setLoadingSlots(true);
-        const slots = await getAvailableSlotsForTeacher(
-          selectedTeacher, 
-          studentClass, 
-          selectedPhase, 
-          studentName,
-          studentClass,
-          studentSection,
-          selectedTeachers
-        );
+        const slots = await getAvailableSlotsForTeacher(selectedTeacher, effectiveGrade, selectedPhase, studentName, studentClass, studentSection, selectedTeachers);
         setAvailableSlots(slots);
         setLoadingSlots(false);
       } else {
         setAvailableSlots([]);
       }
     };
-    
     fetchSlots();
-  }, [selectedTeacher, selectedPhase, studentName, studentClass, studentSection, selectedTeachers]);
+  }, [selectedTeacher, selectedPhase, studentName, studentClass, studentSection, selectedTeachers, effectiveGrade]);
 
   const handleAdd = () => {
-    if (!studentClass) {
-      alert('Please select grade in Student Details section first');
-      return;
-    }
-    
-    if (!selectedTeacher || !selectedPhase || !selectedSlot) {
-      alert('Please select teacher, phase, and slot');
-      return;
-    }
-
-    onAddTeacher(selectedTeacher, studentClass, selectedPhase, parseInt(selectedSlot));
-
-    // Reset selections
-    setSelectedTeacher('');
-    setSelectedPhase('');
-    setSelectedSlot('');
-    setAvailableSlots([]);
+    if (!studentClass) { alert('Please select grade in Student Details first'); return; }
+    if (!selectedTeacher || !selectedPhase || !selectedSlot) { alert('Please select teacher, phase, and slot'); return; }
+    onAddTeacher(selectedTeacher, effectiveGrade, selectedPhase, parseInt(selectedSlot));
+    setSelectedTeacher(''); setSelectedPhase(''); setSelectedSlot(''); setAvailableSlots([]);
   };
 
   return (
     <div className="border-2 border-gray-300 rounded-lg p-4">
+      {/* Grade selector — allows booking teachers from other grades (e.g. extracurricular) */}
+      <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Teacher's Grade <span className="text-gray-400 font-normal">(defaults to your child's grade)</span>
+        </label>
+        <select value={selectedGrade} onChange={e => { setSelectedGrade(e.target.value); setSelectedTeacher(''); setSelectedPhase(''); setSelectedSlot(''); }}
+          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500">
+          <option value="">Same as student ({studentClass || 'select grade first'})</option>
+          {(grades || []).map(g => <option key={g} value={g}>{g}</option>)}
+        </select>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Teacher *</label>
-          <select
-            value={selectedTeacher}
-            onChange={(e) => {
-              setSelectedTeacher(e.target.value);
-              setSelectedPhase('');
-              setSelectedSlot('');
-            }}
-            disabled={!studentClass}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
-          >
+          <select value={selectedTeacher} onChange={e => { setSelectedTeacher(e.target.value); setSelectedPhase(''); setSelectedSlot(''); }}
+            disabled={!effectiveGrade}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200">
             <option value="">Select Teacher</option>
-            {availableTeachers.map(teacher => (
-              <option key={teacher} value={teacher}>{teacher}</option>
-            ))}
+            {availableTeachers.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
-          {!studentClass && (
-            <p className="text-xs text-red-600 mt-1">Select grade above first</p>
-          )}
-          {studentClass && availableTeachers.length === 0 && (
-            <p className="text-xs text-orange-600 mt-1">All teachers for this grade already selected</p>
-          )}
+          {effectiveGrade && availableTeachers.length === 0 && <p className="text-xs text-orange-600 mt-1">All teachers already selected</p>}
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Phase *</label>
-          <select
-            value={selectedPhase}
-            onChange={(e) => {
-              setSelectedPhase(e.target.value);
-              setSelectedSlot('');
-            }}
+          <select value={selectedPhase} onChange={e => { setSelectedPhase(e.target.value); setSelectedSlot(''); }}
             disabled={!selectedTeacher}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
-          >
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200">
             <option value="">Select Phase</option>
             {Object.entries(phases).map(([key, info]) => (
-              <option key={key} value={key}>
-                {info.name} ({info.time}) - {info.rollNumbers}
-              </option>
+              <option key={key} value={key}>{info.name} ({info.time})</option>
             ))}
           </select>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            Slot * {loadingSlots ? (
-              <span className="text-blue-600 text-xs">(Loading...)</span>
-            ) : (
-              <span className="text-green-600 text-xs">({availableSlots.length} available)</span>
-            )}
+            Slot * {loadingSlots ? <span className="text-blue-600 text-xs">(Loading...)</span> : <span className="text-green-600 text-xs">({availableSlots.length} available)</span>}
           </label>
-          <select
-            value={selectedSlot}
-            onChange={(e) => setSelectedSlot(e.target.value)}
+          <select value={selectedSlot} onChange={e => setSelectedSlot(e.target.value)}
             disabled={!selectedPhase || availableSlots.length === 0 || loadingSlots}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200"
-          >
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-200">
             <option value="">Select Slot</option>
             {availableSlots.map(slot => (
-              <option key={slot} value={slot}>
-                Slot {slot} - {phases[selectedPhase]?.timings[slot - 1]}
-              </option>
+              <option key={slot} value={slot}>Slot {slot} - {phases[selectedPhase]?.timings[slot - 1]}</option>
             ))}
           </select>
-          {selectedPhase && availableSlots.length === 0 && !loadingSlots && (
-            <p className="text-red-600 text-xs mt-1">❌ No slots available (consecutive slots or already booked)</p>
-          )}
+          {selectedPhase && availableSlots.length === 0 && !loadingSlots && <p className="text-red-600 text-xs mt-1">❌ No slots available</p>}
         </div>
       </div>
 
-      <button
-        onClick={handleAdd}
-        disabled={!selectedSlot}
-        className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
-      >
+      <button onClick={handleAdd} disabled={!selectedSlot}
+        className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed">
         + Add This Teacher
       </button>
     </div>

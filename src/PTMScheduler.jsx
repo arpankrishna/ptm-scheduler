@@ -1687,8 +1687,12 @@ const PTMScheduler = () => {
           )}
           {/* Phase Timing Editor Modal */}
           {showPhaseEditor && phaseEditorDraft && (
-            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-lg p-8 max-w-2xl w-full">
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowPhaseEditor(false)}>
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center justify-between mb-2">
+                  <h2 className="text-2xl font-bold text-cyan-700">⏱ Phase Timings</h2>
+                  <button onClick={() => setShowPhaseEditor(false)} className="text-gray-400 hover:text-gray-700 text-3xl font-bold leading-none">×</button>
+                </div>
                 <h2 className="text-2xl font-bold mb-2 text-cyan-700">⏱ Phase Timings</h2>
                 <p className="text-gray-500 text-sm mb-6">Set the start time for each phase. All 18 slots will be auto-calculated at 5-minute intervals.</p>
 

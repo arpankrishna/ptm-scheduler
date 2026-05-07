@@ -26,30 +26,63 @@ const PTMScheduler = () => {
     Object.fromEntries(GRADES.map(g => [g, []]))
   );
 
-  // Phase definitions
-  const phases = {
+  // ── Phase config state (loaded from DB, editable by admin) ──
+  const [phaseConfig, setPhaseConfig] = useState({
+    phase1: { start: '08:15', rolls: 'Roll Numbers: 21-30' },
+    phase2: { start: '09:55', rolls: 'Roll Numbers: 1-10' },
+    phase3: { start: '11:35', rolls: 'Roll Numbers: 11-20' },
+  });
+  const [showPhaseEditor, setShowPhaseEditor] = useState(false);
+  const [phaseEditorDraft, setPhaseEditorDraft] = useState(null);
+
+  // Helper: generate 18 slot timings from a start time (HH:MM), 5-min intervals
+  const generateTimings = (startHHMM) => {
+    const [h, m] = startHHMM.split(':').map(Number);
+    const timings = [];
+    for (let i = 0; i < 18; i++) {
+      const total = h * 60 + m + i * 5;
+      const hh = Math.floor(total / 60);
+      const mm = total % 60;
+      timings.push(`${hh}:${mm.toString().padStart(2, '0')}`);
+    }
+    return timings;
+  };
+
+  // Helper: format display time range from start (18 slots × 5 min = 85 min)
+  const formatTimeRange = (startHHMM) => {
+    const [h, m] = startHHMM.split(':').map(Number);
+    const endTotal = h * 60 + m + 85;
+    const eh = Math.floor(endTotal / 60);
+    const em = endTotal % 60;
+    const fmtStart = `${h > 12 ? h - 12 : h}:${m.toString().padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`;
+    const fmtEnd = `${eh > 12 ? eh - 12 : eh}:${em.toString().padStart(2, '0')} ${eh >= 12 ? 'PM' : 'AM'}`;
+    return `${fmtStart} - ${fmtEnd}`;
+  };
+
+  // Build phases object dynamically from phaseConfig
+  const phases = useMemo(() => ({
     phase1: {
       name: 'Phase 1',
-      time: '8:15 AM - 9:40 AM',
-      rollNumbers: 'Roll Numbers: 21-30',
+      time: formatTimeRange(phaseConfig.phase1.start),
+      rollNumbers: phaseConfig.phase1.rolls,
       slots: 18,
-      timings: ['8:15','8:20','8:25','8:30','8:35','8:40','8:45','8:50','8:55','9:00','9:05','9:10','9:15','9:20','9:25','9:30','9:35','9:40']
+      timings: generateTimings(phaseConfig.phase1.start),
     },
     phase2: {
       name: 'Phase 2',
-      time: '9:55 AM - 11:20 AM',
-      rollNumbers: 'Roll Numbers: 1-10',
+      time: formatTimeRange(phaseConfig.phase2.start),
+      rollNumbers: phaseConfig.phase2.rolls,
       slots: 18,
-      timings: ['9:55','10:00','10:05','10:10','10:15','10:20','10:25','10:30','10:35','10:40','10:45','10:50','10:55','11:00','11:05','11:10','11:15','11:20']
+      timings: generateTimings(phaseConfig.phase2.start),
     },
     phase3: {
       name: 'Phase 3',
-      time: '11:35 AM - 1:00 PM',
-      rollNumbers: 'Roll Numbers: 11-20',
+      time: formatTimeRange(phaseConfig.phase3.start),
+      rollNumbers: phaseConfig.phase3.rolls,
       slots: 18,
-      timings: ['11:35','11:40','11:45','11:50','11:55','12:00','12:05','12:10','12:15','12:20','12:25','12:30','12:35','12:40','12:45','12:50','12:55','13:00']
-    }
-  };
+      timings: generateTimings(phaseConfig.phase3.start),
+    },
+  }), [phaseConfig]);
 
   // All unique teachers
   const allTeachers = useMemo(() => {
@@ -308,9 +341,17 @@ const PTMScheduler = () => {
 
   const loadPtmConfig = async () => {
     const { data } = await supabase.from('ptm_config').select('*').order('created_at', { ascending: false }).limit(1);
-    if (data && data.length > 0 && data[0].ptm_date) {
-      const d = new Date(data[0].ptm_date);
-      setPtmDate(d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }));
+    if (data && data.length > 0) {
+      const row = data[0];
+      if (row.ptm_date) {
+        const d = new Date(row.ptm_date);
+        setPtmDate(d.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }));
+      }
+      setPhaseConfig({
+        phase1: { start: row.phase1_start || '08:15', rolls: row.phase1_rolls || 'Roll Numbers: 21-30' },
+        phase2: { start: row.phase2_start || '09:55', rolls: row.phase2_rolls || 'Roll Numbers: 1-10' },
+        phase3: { start: row.phase3_start || '11:35', rolls: row.phase3_rolls || 'Roll Numbers: 11-20' },
+      });
     }
   };
 
@@ -765,6 +806,27 @@ const PTMScheduler = () => {
       setShowStudentUpload(false);
     } catch (e) { alert('Error: ' + e.message); }
     finally { setStudentUploadLoading(false); }
+  };
+
+  // ─── Phase config save ────────────────────────────────────────────────────
+  const savePhaseConfig = async (draft) => {
+    const { data: existing } = await supabase.from('ptm_config').select('id').order('created_at', { ascending: false }).limit(1);
+    const payload = {
+      phase1_start: draft.phase1.start,
+      phase2_start: draft.phase2.start,
+      phase3_start: draft.phase3.start,
+      phase1_rolls: draft.phase1.rolls,
+      phase2_rolls: draft.phase2.rolls,
+      phase3_rolls: draft.phase3.rolls,
+      updated_at: new Date(),
+    };
+    if (existing && existing.length > 0) {
+      await supabase.from('ptm_config').update(payload).eq('id', existing[0].id);
+    } else {
+      await supabase.from('ptm_config').insert({ ...payload, ptm_date: new Date().toISOString().split('T')[0], start_time: '08:00', end_time: '13:00' });
+    }
+    setPhaseConfig(draft);
+    setShowPhaseEditor(false);
   };
 
   // ─── Teacher accounts upload ──────────────────────────────────────────────
@@ -1346,6 +1408,10 @@ const PTMScheduler = () => {
                   className="flex items-center gap-2 bg-blue-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-blue-600 text-sm">
                   <Calendar size={16} /> Set Date
                 </button>
+                <button onClick={() => { setPhaseEditorDraft(JSON.parse(JSON.stringify(phaseConfig))); setShowPhaseEditor(true); }}
+                  className="flex items-center gap-2 bg-cyan-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-cyan-600 text-sm">
+                  ⏱ Phase Timings
+                </button>
                 <button onClick={() => setShowTeacherUpload(true)}
                   className="flex items-center gap-2 bg-purple-500 text-white px-3 py-2 rounded-lg font-semibold hover:bg-purple-600 text-sm">
                   <Upload size={16} /> Teachers
@@ -1619,6 +1685,63 @@ const PTMScheduler = () => {
               </div>
             </div>
           )}
+          {/* Phase Timing Editor Modal */}
+          {showPhaseEditor && phaseEditorDraft && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-lg p-8 max-w-2xl w-full">
+                <h2 className="text-2xl font-bold mb-2 text-cyan-700">⏱ Phase Timings</h2>
+                <p className="text-gray-500 text-sm mb-6">Set the start time for each phase. All 18 slots will be auto-calculated at 5-minute intervals.</p>
+
+                <div className="space-y-6">
+                  {['phase1', 'phase2', 'phase3'].map((pk, idx) => {
+                    const preview = generateTimings(phaseEditorDraft[pk].start);
+                    return (
+                      <div key={pk} className="border-2 border-gray-200 rounded-lg p-4">
+                        <h3 className="font-bold text-lg text-indigo-700 mb-3">Phase {idx + 1}</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
+                            <input type="time" value={phaseEditorDraft[pk].start}
+                              onChange={e => setPhaseEditorDraft(d => ({ ...d, [pk]: { ...d[pk], start: e.target.value } }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500 text-lg font-mono" />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Roll Number Label</label>
+                            <input type="text" value={phaseEditorDraft[pk].rolls}
+                              onChange={e => setPhaseEditorDraft(d => ({ ...d, [pk]: { ...d[pk], rolls: e.target.value } }))}
+                              placeholder="e.g. Roll Numbers: 1-10"
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-cyan-500" />
+                          </div>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg p-3">
+                          <p className="text-xs text-gray-500 mb-2 font-medium">SLOT PREVIEW ({formatTimeRange(phaseEditorDraft[pk].start)})</p>
+                          <div className="flex flex-wrap gap-1">
+                            {preview.map((t, i) => (
+                              <span key={i} className="bg-indigo-100 text-indigo-700 text-xs px-2 py-0.5 rounded font-mono">
+                                {i + 1}: {t}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="flex gap-3 mt-6">
+                  <button onClick={() => savePhaseConfig(phaseEditorDraft)}
+                    className="flex-1 bg-cyan-600 text-white py-3 rounded-lg font-bold hover:bg-cyan-700">
+                    ✓ Save Phase Timings
+                  </button>
+                  <button onClick={() => setShowPhaseEditor(false)}
+                    className="flex-1 bg-gray-300 text-gray-700 py-3 rounded-lg font-semibold">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Teacher Accounts Upload Modal */}
           {showTeacherAccounts && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">

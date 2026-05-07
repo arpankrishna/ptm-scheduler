@@ -1794,7 +1794,13 @@ const PTMScheduler = () => {
               </div>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+  );
+};
 
+// ─── ParentTeacherSelector Component ─────────────────────────────────────────
 const ParentTeacherSelector = ({ teacherData, phases, bookings, getBookingKey, getAvailableSlotsForTeacher, onAddTeacher, studentName, studentClass, studentSection, selectedTeachers, grades }) => {
   const [selectedGrade, setSelectedGrade] = useState('');
   const [selectedTeacher, setSelectedTeacher] = useState('');

@@ -186,18 +186,25 @@ const PTMScheduler = () => {
   }, []);
 
   const resolveTeacherFromAuth = async (user) => {
-    // Look up teacher by auth_email
-    const { data, error } = await supabase
+    // Use supabaseAdmin to bypass RLS on teachers table
+    const { data, error } = await supabaseAdmin
       .from('teachers')
       .select('teacher_name, is_admin')
       .eq('auth_email', user.email)
-      .single();
+      .limit(1);
 
-    if (data) {
-      setLoggedInTeacher(data.teacher_name);
-      setUserRole(data.is_admin ? 'admin' : 'teacher');
+    if (error) {
+      console.error('Error resolving teacher:', error);
+      await supabase.auth.signOut();
+      return;
+    }
+
+    if (data && data.length > 0) {
+      setLoggedInTeacher(data[0].teacher_name);
+      setUserRole(data[0].is_admin ? 'admin' : 'teacher');
     } else {
-      // email not linked to any teacher — treat as unlinked (logout)
+      // No teacher found with this email
+      console.warn('No teacher found for email:', user.email);
       await supabase.auth.signOut();
     }
   };
@@ -408,9 +415,20 @@ const PTMScheduler = () => {
     if (error) {
       setLoginError('Invalid email or password. Contact admin if you need help.');
     } else {
-      setShowLogin(false);
-      setLoginEmail('');
-      setLoginPassword('');
+      // If logging in with default password, force change
+      if (loginPassword === 'SBSptm@1234') {
+        setShowLogin(false);
+        setLoginEmail('');
+        setLoginPassword('');
+        setTimeout(() => {
+          setShowChangePassword(true);
+          setChangePwError('⚠️ You are using the default password. Please set a new password to continue.');
+        }, 500);
+      } else {
+        setShowLogin(false);
+        setLoginEmail('');
+        setLoginPassword('');
+      }
     }
   };
 
@@ -1063,27 +1081,38 @@ const PTMScheduler = () => {
   }
 
   // ─── CHANGE PASSWORD MODAL ────────────────────────────────────────────────
-  const ChangePasswordModal = () => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-lg p-8 max-w-md w-full">
-        <h2 className="text-xl font-bold mb-6 text-indigo-700 flex items-center gap-2"><Key size={20} /> Change Password</h2>
-        <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-          placeholder="New password (min 6 characters)"
-          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500" />
-        <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-          placeholder="Confirm new password"
-          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
-        {changePwError && <p className="text-red-600 text-sm mb-3">{changePwError}</p>}
-        {changePwSuccess && <p className="text-green-600 text-sm mb-3">{changePwSuccess}</p>}
-        <div className="flex gap-2">
-          <button onClick={handleChangePassword}
-            className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700">Save Password</button>
-          <button onClick={() => { setShowChangePassword(false); setChangePwError(''); setNewPassword(''); setConfirmPassword(''); }}
-            className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">Cancel</button>
+  const ChangePasswordModal = () => {
+    const isForced = changePwError?.startsWith('⚠️');
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-lg p-8 max-w-md w-full">
+          <h2 className="text-xl font-bold mb-2 text-indigo-700 flex items-center gap-2"><Key size={20} /> Change Password</h2>
+          {isForced && (
+            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-4 rounded">
+              <p className="text-yellow-800 text-sm font-semibold">⚠️ First login detected — please set your own password before continuing.</p>
+            </div>
+          )}
+          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
+            placeholder="New password (min 6 characters)"
+            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500" />
+          <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
+            placeholder="Confirm new password"
+            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
+          {!isForced && changePwError && <p className="text-red-600 text-sm mb-3">{changePwError}</p>}
+          {changePwSuccess && <p className="text-green-600 text-sm mb-3">{changePwSuccess}</p>}
+          <div className="flex gap-2">
+            <button onClick={handleChangePassword}
+              className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700">Save Password</button>
+            {!isForced && (
+              <button onClick={() => { setShowChangePassword(false); setChangePwError(''); setNewPassword(''); setConfirmPassword(''); }}
+                className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">Cancel</button>
+            )}
+          </div>
+          {isForced && <p className="text-xs text-gray-400 mt-3 text-center">You cannot skip this step.</p>}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   // ─── PARENT VIEW ──────────────────────────────────────────────────────────
   if (!userRole) {

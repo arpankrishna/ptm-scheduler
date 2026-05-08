@@ -730,11 +730,32 @@ const PTMScheduler = () => {
         const workbook = XLSX.read(data, { type: 'array' });
         const worksheet = workbook.Sheets[workbook.SheetNames[0]];
         const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-        const headerRow = jsonData[0];
+
+        // Find the header row that contains grade columns (VI, VII, etc.)
+        const gradeSet = new Set(GRADES);
+        let headerRowIdx = -1;
         const gradeColumns = {};
-        headerRow.forEach((h, i) => { if (GRADES.includes(h)) gradeColumns[h] = i; });
+
+        for (let i = 0; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          const found = row.some(cell => gradeSet.has(String(cell || '').trim()));
+          if (found) {
+            headerRowIdx = i;
+            row.forEach((cell, colIdx) => {
+              const g = String(cell || '').trim();
+              if (gradeSet.has(g)) gradeColumns[g] = colIdx;
+            });
+            break;
+          }
+        }
+
+        if (headerRowIdx < 0 || Object.keys(gradeColumns).length === 0) {
+          alert('Could not find grade columns. Ensure your Excel has columns: VI, VII, VIII, IX, X, XI, XII');
+          return;
+        }
+
         const parsedData = Object.fromEntries(GRADES.map(g => [g, []]));
-        for (let i = 1; i < jsonData.length; i++) {
+        for (let i = headerRowIdx + 1; i < jsonData.length; i++) {
           const row = jsonData[i];
           GRADES.forEach(grade => {
             const col = gradeColumns[grade];
@@ -803,7 +824,7 @@ const PTMScheduler = () => {
           const row = jsonData[i];
           const name = row[colName] ? String(row[colName]).trim() : '';
           if (!name) continue;
-          const sid = colSid >= 0 && row[colSid] ? String(row[colSid]).trim() : `${studentUploadGrade}-${studentUploadSection}-${i}`;
+          const sid = colSid >= 0 && row[colSid] ? String(row[colSid]).replace(/\s+/g, '').trim() : `${studentUploadGrade}-${studentUploadSection}-${i}`;
           const serial = colSerial >= 0 && row[colSerial] ? parseInt(row[colSerial]) : i;
           students.push({ name, sid, serial });
         }
@@ -822,7 +843,7 @@ const PTMScheduler = () => {
     setStudentUploadLoading(true);
     try {
       // Delete existing students for this grade+section
-      await supabase.from('students').delete()
+      await supabaseAdmin.from('students').delete()
         .eq('grade', studentUploadGrade)
         .eq('section', studentUploadSection);
 
@@ -835,7 +856,7 @@ const PTMScheduler = () => {
       }));
 
       for (let i = 0; i < records.length; i += 100) {
-        const { error } = await supabase.from('students').insert(records.slice(i, i + 100));
+        const { error } = await supabaseAdmin.from('students').insert(records.slice(i, i + 100));
         if (error) { alert('Error saving students: ' + error.message); setStudentUploadLoading(false); return; }
       }
 

@@ -972,24 +972,22 @@ const PTMScheduler = () => {
 
     for (const teacher of uploadedTeacherAccounts) {
       try {
-        // Step 1: Check if auth user already exists by trying to create
-        const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+        // Use signUp — works from frontend without server-side requirement
+        const { data: authData, error: authError } = await supabase.auth.signUp({
           email: teacher.email,
           password: 'SBSptm@1234',
-          email_confirm: true,  // skip email confirmation
-          user_metadata: { teacher_name: teacher.name }
+          options: { data: { teacher_name: teacher.name } }
         });
 
         if (authError) {
-          if (authError.message.includes('already been registered') || authError.message.includes('already exists')) {
+          if (authError.message.includes('already registered') || authError.message.includes('already exists')) {
             // User exists — just update the teachers table
-            const { error: updateError } = await supabase
+            const { error: updateError } = await supabaseAdmin
               .from('teachers')
               .update({ auth_email: teacher.email })
               .eq('teacher_name', teacher.name);
-
             if (updateError) {
-              results.failed.push({ name: teacher.name, email: teacher.email, reason: 'Auth exists but DB update failed: ' + updateError.message });
+              results.failed.push({ name: teacher.name, email: teacher.email, reason: 'DB update failed: ' + updateError.message });
             } else {
               results.updated.push({ name: teacher.name, email: teacher.email });
             }
@@ -999,9 +997,8 @@ const PTMScheduler = () => {
           continue;
         }
 
-        // Step 2: Update auth_email in teachers table (match by name only)
-        await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
-
+        // Update auth_email in teachers table
+        await supabaseAdmin.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
         results.created.push({ name: teacher.name, email: teacher.email });
 
       } catch (err) {

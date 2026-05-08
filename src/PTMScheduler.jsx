@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Download, CheckCircle, Coffee, Play, Pause, Calendar, User, Lock, Upload, LogOut, Key } from 'lucide-react';
 import { createClient } from '@supabase/supabase-js';
 import * as XLSX from 'xlsx';
@@ -157,6 +157,7 @@ const PTMScheduler = () => {
   const [trackingStudentsList, setTrackingStudentsList] = useState([]);
   const [trackingStudentsLoading, setTrackingStudentsLoading] = useState(false);
   const [trackedBookings, setTrackedBookings] = useState([]);
+  const [nextUpAlerts, setNextUpAlerts] = useState([]); // booking ids where student is "next up"
 
   // ── PTM config ──
   const [ptmDate, setPtmDate] = useState('PTM Day');
@@ -207,6 +208,28 @@ const PTMScheduler = () => {
     loadTeacherStatus();
     loadTeachersFromDatabase();
     loadPtmConfig();
+  }, []);
+
+  // ─── Check next-up alerts for tracked student ────────────────────────────
+  // Called whenever bookings change AND a student is viewing their appointments
+  const checkNextUpAlerts = useCallback((currentBookings, currentTrackedBookings) => {
+    if (!currentTrackedBookings || currentTrackedBookings.length === 0) return;
+    const alerts = [];
+    currentTrackedBookings.forEach(tracked => {
+      if (tracked.status !== 'pending') return;
+      // Find the booking immediately before this one for the same teacher
+      const prevSlot = tracked.slot - 1;
+      if (prevSlot < 1) return;
+      // Check if previous slot for this teacher is now 'done'
+      for (const grade of GRADES) {
+        const prevKey = getBookingKey(grade, tracked.teacher, tracked.phase, prevSlot);
+        if (currentBookings[prevKey] && currentBookings[prevKey].status === 'done') {
+          alerts.push(tracked.id);
+          break;
+        }
+      }
+    });
+    setNextUpAlerts(alerts);
   }, []);
 
   // ─── Real-time subscriptions ──────────────────────────────────────────────
@@ -327,6 +350,23 @@ const PTMScheduler = () => {
     });
     setBookings(bookingsMap);
     setIsLoading(false);
+
+    // Refresh tracked bookings statuses in real-time
+    setTrackedBookings(prev => {
+      if (!prev || prev.length === 0) return prev;
+      const updated = prev.map(tb => {
+        // Find this booking in the new map
+        for (const grade of GRADES) {
+          const key = getBookingKey(grade, tb.teacher, tb.phase, tb.slot);
+          if (bookingsMap[key] && bookingsMap[key].studentName === tb.studentName) {
+            return { ...tb, status: bookingsMap[key].status };
+          }
+        }
+        return tb;
+      });
+      checkNextUpAlerts(bookingsMap, updated);
+      return updated;
+    });
   };
 
   const loadTeacherStatus = async () => {
@@ -1162,8 +1202,21 @@ const PTMScheduler = () => {
                     const bookingMins = bh * 60 + bm;
                     const isPast = bookingMins < currentMins;
                     const isNext = !isPast && trackedBookings.findIndex(b => { const [h, m] = (b.timing || '0:0').split(':').map(Number); return h * 60 + m >= currentMins; }) === idx;
+                    const isNextUp = nextUpAlerts.includes(booking.id);
                     return (
-                      <div key={booking.id} className={`border-2 rounded-lg p-4 ${isNext ? 'border-yellow-400 bg-yellow-50' : isPast ? 'border-gray-300 bg-gray-50 opacity-60' : 'border-indigo-300 bg-white'}`}>
+                      <div key={booking.id} className={`border-2 rounded-lg p-4 ${isNextUp ? 'border-green-500 bg-green-50 shadow-lg' : isNext ? 'border-yellow-400 bg-yellow-50' : isPast ? 'border-gray-300 bg-gray-50 opacity-60' : 'border-indigo-300 bg-white'}`}>
+
+                        {/* Next-up alert banner */}
+                        {isNextUp && (
+                          <div className="bg-green-500 text-white rounded-lg p-3 mb-3 flex items-center gap-2 animate-pulse">
+                            <span className="text-2xl">🔔</span>
+                            <div>
+                              <p className="font-bold text-lg">Your turn is next!</p>
+                              <p className="text-sm opacity-90">Please proceed to {booking.teacher}'s desk now.</p>
+                            </div>
+                          </div>
+                        )}
+
                         <div className="flex items-start justify-between">
                           <div className="flex-1">
                             <h3 className="text-lg font-bold text-gray-800">{booking.teacher}</h3>
@@ -1183,7 +1236,8 @@ const PTMScheduler = () => {
                               </div>
                             )}
                           </div>
-                          {isNext && !isPast && <div className="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">NEXT</div>}
+                          {isNextUp && <div className="bg-green-500 text-white px-3 py-1 rounded-full text-xs font-bold">GO NOW</div>}
+                          {!isNextUp && isNext && !isPast && <div className="bg-yellow-400 text-yellow-900 px-3 py-1 rounded-full text-xs font-bold">NEXT</div>}
                           {isPast && <div className="bg-gray-400 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">PAST</div>}
                         </div>
                       </div>

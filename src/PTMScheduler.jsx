@@ -1078,38 +1078,7 @@ const PTMScheduler = () => {
   }
 
   // ─── CHANGE PASSWORD MODAL ────────────────────────────────────────────────
-  const ChangePasswordModal = () => {
-    const isForced = changePwError?.startsWith('⚠️');
-    return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-lg p-8 max-w-md w-full">
-          <h2 className="text-xl font-bold mb-2 text-indigo-700 flex items-center gap-2"><Key size={20} /> Change Password</h2>
-          {isForced && (
-            <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-4 rounded">
-              <p className="text-yellow-800 text-sm font-semibold">⚠️ First login detected — please set your own password before continuing.</p>
-            </div>
-          )}
-          <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)}
-            placeholder="New password (min 6 characters)"
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500" />
-          <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)}
-            placeholder="Confirm new password"
-            className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500" />
-          {!isForced && changePwError && <p className="text-red-600 text-sm mb-3">{changePwError}</p>}
-          {changePwSuccess && <p className="text-green-600 text-sm mb-3">{changePwSuccess}</p>}
-          <div className="flex gap-2">
-            <button onClick={handleChangePassword}
-              className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700">Save Password</button>
-            {!isForced && (
-              <button onClick={() => { setShowChangePassword(false); setChangePwError(''); setNewPassword(''); setConfirmPassword(''); }}
-                className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">Cancel</button>
-            )}
-          </div>
-          {isForced && <p className="text-xs text-gray-400 mt-3 text-center">You cannot skip this step.</p>}
-        </div>
-      </div>
-    );
-  };
+  // ChangePasswordModal is defined outside component — see bottom of file
 
   // ─── PARENT VIEW ──────────────────────────────────────────────────────────
   if (!userRole) {
@@ -1395,7 +1364,13 @@ const PTMScheduler = () => {
     const isOnBreak = teacherStatus[loggedInTeacher]?.isOnBreak || false;
     return (
       <div className="min-h-screen bg-gradient-to-br from-indigo-500 to-purple-600 p-4">
-        {showChangePassword && <ChangePasswordModal />}
+        {showChangePassword && <ChangePasswordModal
+          newPassword={newPassword} setNewPassword={setNewPassword}
+          confirmPassword={confirmPassword} setConfirmPassword={setConfirmPassword}
+          changePwError={changePwError} changePwSuccess={changePwSuccess}
+          onSave={handleChangePassword}
+          onClose={() => { setShowChangePassword(false); setChangePwError(''); setNewPassword(''); setConfirmPassword(''); }}
+        />}
         <div className="max-w-7xl mx-auto">
           <div className="bg-white rounded-lg shadow-2xl overflow-hidden">
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white p-4">
@@ -2006,6 +1981,54 @@ const PTMScheduler = () => {
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── ChangePasswordModal Component ───────────────────────────────────────────
+const ChangePasswordModal = ({ newPassword, setNewPassword, confirmPassword, setConfirmPassword, changePwError, changePwSuccess, onSave, onClose }) => {
+  const isForced = changePwError?.startsWith('⚠️');
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-lg p-8 max-w-md w-full">
+        <h2 className="text-xl font-bold mb-2 text-indigo-700 flex items-center gap-2">
+          <Key size={20} /> Change Password
+        </h2>
+        {isForced && (
+          <div className="bg-yellow-50 border-l-4 border-yellow-400 p-3 mb-4 rounded">
+            <p className="text-yellow-800 text-sm font-semibold">⚠️ First login detected — please set your own password before continuing.</p>
+          </div>
+        )}
+        <input
+          type="password"
+          value={newPassword}
+          onChange={e => setNewPassword(e.target.value)}
+          placeholder="New password (min 6 characters)"
+          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-3 focus:outline-none focus:border-indigo-500"
+        />
+        <input
+          type="password"
+          value={confirmPassword}
+          onChange={e => setConfirmPassword(e.target.value)}
+          placeholder="Confirm new password"
+          className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg mb-4 focus:outline-none focus:border-indigo-500"
+        />
+        {!isForced && changePwError && <p className="text-red-600 text-sm mb-3">{changePwError}</p>}
+        {changePwSuccess && <p className="text-green-600 text-sm mb-3">{changePwSuccess}</p>}
+        <div className="flex gap-2">
+          <button onClick={onSave}
+            className="flex-1 bg-indigo-600 text-white py-2 rounded-lg font-bold hover:bg-indigo-700">
+            Save Password
+          </button>
+          {!isForced && (
+            <button onClick={onClose}
+              className="flex-1 bg-gray-300 text-gray-700 py-2 rounded-lg font-semibold">
+              Cancel
+            </button>
+          )}
+        </div>
+        {isForced && <p className="text-xs text-gray-400 mt-3 text-center">You cannot skip this step.</p>}
       </div>
     </div>
   );

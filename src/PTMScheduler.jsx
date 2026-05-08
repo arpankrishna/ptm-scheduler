@@ -920,25 +920,8 @@ const PTMScheduler = () => {
           continue;
         }
 
-        // Step 2: Update or insert teacher in teachers table with auth_email
-        if (teacher.grade && GRADES.includes(teacher.grade)) {
-          // Upsert into teachers table
-          const { error: dbError } = await supabase
-            .from('teachers')
-            .upsert({
-              teacher_name: teacher.name,
-              grade: teacher.grade,
-              auth_email: teacher.email
-            }, { onConflict: 'teacher_name,grade' });
-
-          if (dbError) {
-            // Try just updating auth_email if record exists
-            await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
-          }
-        } else {
-          // No grade in excel, just update auth_email for existing teacher
-          await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
-        }
+        // Step 2: Update auth_email in teachers table (match by name only)
+        await supabase.from('teachers').update({ auth_email: teacher.email }).eq('teacher_name', teacher.name);
 
         results.created.push({ name: teacher.name, email: teacher.email });
 
